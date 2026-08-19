@@ -40,6 +40,8 @@ type Repository interface {
 	GetQuotation(context.Context, string) (*Quotation, error)
 	AcceptQuotation(context.Context, *Quotation) (*Job, error)
 }
+
+type ExpiryRepository interface { ExpireStale(context.Context, time.Time) error }
 type Notifier interface {
 	Notify(context.Context, string, string, map[string]interface{}) error
 }
@@ -111,7 +113,13 @@ func (s *MatchingService) MatchProviders(ctx context.Context, id string, o Match
 	if e != nil {
 		return nil, fmt.Errorf("match providers: %w", e)
 	}
+	for _, match := range m { if s.notifier != nil { _ = s.notifier.Notify(ctx, match.ProviderID, "service_request.matched", map[string]interface{}{"request_id": id, "score": match.MatchScore}) } }
 	return m, nil
+}
+
+func (s *MatchingService) StartExpiryWorker(ctx context.Context, interval, expiry time.Duration) {
+	repo, ok := s.repo.(ExpiryRepository); if !ok { return }; if interval <= 0 { interval=time.Hour }; if expiry <= 0 { expiry=24*time.Hour }
+	go func(){ ticker:=time.NewTicker(interval); defer ticker.Stop(); for { select { case <-ctx.Done(): return; case now:=<-ticker.C: _=repo.ExpireStale(ctx, now.Add(-expiry)) } } }()
 }
 func (s *MatchingService) CreateQuotation(ctx context.Context, q *Quotation) (*Quotation, error) {
 	if q == nil || q.RequestID == "" || q.ProviderID == "" || q.Amount < 0 {

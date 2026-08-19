@@ -11,6 +11,8 @@ import (
 
 	"ispilolite/api/handlers"
 	"ispilolite/internal/middleware"
+	"ispilolite/internal/repository/postgres"
+	"ispilolite/internal/services/geospatial"
 	"ispilolite/pkg/database"
 	"ispilolite/pkg/monitoring"
 )
@@ -35,6 +37,7 @@ func SetupRouter() http.Handler {
 	smsAdmin := handlers.NewSMSAdminHandler()
 	notificationsHandler := handlers.NewNotificationHandler()
 	criticalAlerts := handlers.NewCriticalAlertHandler()
+	geoHandler := handlers.NewGeospatialHandler(geospatial.NewGeospatialService(postgres.NewGeospatialRepository()))
 
 	router.GET("/health", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	router.GET("/readyz", readiness)
@@ -56,6 +59,10 @@ func SetupRouter() http.Handler {
 	api.GET("/package-units", stdHandler(isp.ListPackageUnits))
 
 	api.GET("/geo/locations/search", stdHandler(location.SearchLocations))
+	api.GET("/geo/nearby/isps", stdHandler(geoHandler.NearbyISPs))
+	api.GET("/geo/nearby/technicians", stdHandler(geoHandler.NearbyTechnicians))
+	api.GET("/geo/coverage", stdHandler(geoHandler.Coverage))
+	api.GET("/geo/search", stdHandler(geoHandler.Locations))
 	api.GET("/geo/locations/by-county", stdHandler(location.ListCountyLocations))
 	api.POST("/geo/locations", authHandler("", location.SubmitLocation))
 	api.GET("/geo/locations/:id", stdHandler(location.GetLocation))
