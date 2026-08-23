@@ -20,6 +20,7 @@ import (
 	"ispilolite/pkg/database"
 	"ispilolite/pkg/monitoring"
 	"ispilolite/pkg/telemetry"
+	"ispilolite/pkg/worklife"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 	collectorStop := make(chan struct{})
 	defer close(collectorStop)
 	monitoring.StartDBCollector(collectorStop, database.GetWriter(), database.GetReader())
+	worklife.StartDeadlineScheduler(ctx, database.GetWriter(), log.Default())
 	srv := &http.Server{Addr: ":" + strconv.Itoa(envInt("PORT", 8001)), Handler: routes.SetupRouter(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

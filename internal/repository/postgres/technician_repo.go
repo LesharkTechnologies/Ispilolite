@@ -45,6 +45,25 @@ func (r *technicianRepo) GetProfile(id string) (*models.TechnicianProfile, error
 	p.Skills, err = r.GetSkills(id)
 	return p, err
 }
+
+func (r *technicianRepo) GetCompanyLinks(id string) ([]map[string]interface{}, error) {
+	rows, err := r.reader.Query(`SELECT l.isp_id,l.company_technician_id,l.phone_snapshot,l.started_at,l.ended_at,u.name FROM isp_technicians l JOIN users u ON u.id=l.isp_id WHERE l.technician_id=$1 ORDER BY l.started_at DESC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]interface{}{}
+	for rows.Next() {
+		var ispID, companyID, phone, name string
+		var start time.Time
+		var end *time.Time
+		if err := rows.Scan(&ispID, &companyID, &phone, &start, &end, &name); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]interface{}{"isp_id": ispID, "company_technician_id": companyID, "phone": phone, "company_name": name, "started_at": start, "ended_at": end})
+	}
+	return out, rows.Err()
+}
 func (r *technicianRepo) SetSkills(id string, skills []string) error {
 	p, err := r.GetProfile(id)
 	if err != nil {

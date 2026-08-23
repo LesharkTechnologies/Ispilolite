@@ -10,10 +10,10 @@ import (
 type RegisterRequest struct {
 	Phone    string `json:"phone" binding:"required"`
 	Name     string `json:"name" binding:"required"`
-	Email    string `json:"email" binding:"required,email"`
-	Role     string `json:"role" binding:"required,oneof=customer technician isp"`
+	Email    string `json:"email,omitempty" binding:"omitempty,email"`
+	Role     string `json:"role,omitempty"`
 	Username string `json:"username,omitempty"`
-	Password string `json:"password" binding:"required,min=6"`
+	Password string `json:"password,omitempty"`
 }
 
 type LoginRequest struct {
@@ -125,6 +125,10 @@ type JobAvailabilityRequest struct {
 }
 type JobRequestStatusRequest struct {
 	Status string `json:"status"`
+}
+type JobLifecycleRequest struct {
+	EndsAt string `json:"ends_at,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type FinalizeQuotationRequest struct {

@@ -84,3 +84,7 @@ func (s *Service) MyPosts(id string) ([]*models.TechnicianPost, error) {
 func (s *Service) Published(kind string, limit int) ([]*models.TechnicianPost, error) {
 	return s.repo.ListPublishedPosts(strings.TrimSpace(kind), limit)
 }
+
+func (s *Service) CompanyLinks(technicianID string) ([]map[string]interface{}, error) {
+	return s.repo.GetCompanyLinks(technicianID)
+}

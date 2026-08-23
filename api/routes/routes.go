@@ -13,8 +13,12 @@ import (
 	"ispilolite/internal/middleware"
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/services/geospatial"
+	"ispilolite/internal/services/jobrequest"
+	"ispilolite/internal/services/matching"
+	"ispilolite/internal/services/notification"
 	"ispilolite/pkg/database"
 	"ispilolite/pkg/monitoring"
+	appnotifications "ispilolite/pkg/notifications"
 )
 
 // SetupRouter builds the application's Gin router. Business handlers still use
@@ -37,7 +41,11 @@ func SetupRouter() http.Handler {
 	smsAdmin := handlers.NewSMSAdminHandler()
 	notificationsHandler := handlers.NewNotificationHandler()
 	criticalAlerts := handlers.NewCriticalAlertHandler()
+	vacancies := handlers.NewVacancyHandler()
 	geoHandler := handlers.NewGeospatialHandler(geospatial.NewGeospatialService(postgres.NewGeospatialRepository()))
+	matcher := matching.NewMatchingService(postgres.NewMatchingRepository(), appnotifications.NewService(postgres.NewNotificationRepositoryAdapter(), notification.NewSenderFromEnv()))
+	matchingHandler := handlers.NewMatchingHandler(matcher)
+	jobrequest.SetMatcher(matcher)
 
 	router.GET("/health", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	router.GET("/readyz", readiness)
@@ -67,6 +75,9 @@ func SetupRouter() http.Handler {
 	api.POST("/geo/locations", authHandler("", location.SubmitLocation))
 	api.GET("/geo/locations/:id", stdHandler(location.GetLocation))
 	api.POST("/geo/locations/:id/aliases", authHandler("", location.AddAlias))
+	api.GET("/matches/request/:id", authHandler("customer", matchingHandler.Match))
+	api.POST("/matches/:id/respond", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.Respond, "technician": matchingHandler.Respond}))
+	api.DELETE("/matches/:id/decline", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.Decline, "technician": matchingHandler.Decline}))
 
 	api.GET("/public/quotations/:code", stdHandler(quotation.Public))
 	api.POST("/quotations", authHandler("", quotation.Finalize))
@@ -89,14 +100,23 @@ func SetupRouter() http.Handler {
 	api.PUT("/my/jobs/:id", authHandler("customer", client.AssignJob))
 	api.PATCH("/my/jobs/:id", authHandler("customer", client.SetJobAvailability))
 	api.DELETE("/my/jobs/:id", authHandler("customer", client.DeleteJob))
+	api.POST("/my/jobs/:id/terminate", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.TerminateJob, "isp": client.TerminateJob, "technician": client.TerminateJob}))
 
 	api.GET("/my/installations", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetInstallations, "isp": ispEndpoints.GetInstallations}))
 	api.GET("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetProfile, "isp": ispEndpoints.GetProfile, "technician": technician.GetProfile}))
 	api.PUT("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.UpdateProfile, "isp": ispEndpoints.UpdateProfile}))
 	api.DELETE("/my/profile", authHandler("customer", client.RequestDeleteProfile))
 
-	api.GET("/my/technicians", authHandler("isp", ispEndpoints.GetTechnicians))
 	api.POST("/my/technicians", authHandler("isp", ispEndpoints.AddTechnician))
+	api.POST("/my/technicians/:id/link", authHandler("isp", ispEndpoints.LinkTechnician))
+	api.GET("/my/technicians", authHandler("isp", ispEndpoints.ListCompanyTechnicians))
+	api.POST("/my/technicians/:id/end", authHandler("isp", ispEndpoints.EndTechnicianLink))
+	api.POST("/my/vacancies", authHandler("isp", vacancies.Create))
+	api.GET("/my/vacancies", authHandler("isp", vacancies.List))
+	api.DELETE("/my/vacancies/:id", authHandler("isp", vacancies.Close))
+	api.POST("/vacancies/:id/apply", authHandler("technician", vacancies.Apply))
+	api.POST("/my/technician-work-requests", authHandler("isp", ispEndpoints.CreateTechnicianWorkRequest))
+	api.PUT("/my/requests/:id/assign-technician", authHandler("isp", ispEndpoints.AssignTechnician))
 	api.GET("/technicians/:id/profile", stdHandler(technician.GetPublicProfile))
 	api.POST("/technicians/:id/requests", authHandler("customer", technician.CreateJobRequest))
 	api.POST("/technicians/:id/reviews", authHandler("customer", technician.CreateTechnicianReview))

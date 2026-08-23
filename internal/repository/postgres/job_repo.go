@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"ispilolite/internal/models"
@@ -20,17 +21,17 @@ func NewJobRequestRepo() *JobRepository {
 	}
 }
 
-const jobColumns = `id,customer_id,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
-const jobSelectColumns = `id,customer_id,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
+const jobColumns = `id,customer_id,requester_role,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
+const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
 
 func scanJob(row interface{ Scan(...interface{}) error }) (*models.JobRequest, error) {
 	job := &models.JobRequest{}
-	err := row.Scan(&job.ID, &job.CustomerID, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt)
+	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt)
 	return job, err
 }
 
 func (r *JobRepository) CreateJobRequest(job *models.JobRequest) error {
-	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, job.ID, job.CustomerID, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
+	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, job.ID, job.CustomerID, job.RequesterRole, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
 	return err
 }
 
@@ -161,6 +162,42 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		return err
 	}
 	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *JobRepository) AssignTechnician(requestID, ispID, technicianID string) (*models.JobRequest, error) {
+	tx, err := r.writer.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var ok bool
+	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='technician' AND status='active' AND isp_id=$2)`, technicianID, ispID).Scan(&ok); err != nil || !ok {
+		return nil, sql.ErrNoRows
+	}
+	res, err := tx.Exec(`UPDATE service_requests SET assigned_isp_id=$1,assigned_technician_id=$2,status='assigned',is_available=false,updated_at=now() WHERE id=$3 AND (target_isp_id=$1 OR requester_role='customer') AND deleted_at IS NULL AND is_available=true`, ispID, technicianID, requestID)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return scanJob(r.writer.QueryRow(`SELECT `+jobSelectColumns+` FROM service_requests WHERE id=$1 AND deleted_at IS NULL`, requestID))
+}
+
+func (r *JobRepository) TerminateJob(requestID, actorID, reason string, endedAt time.Time) error {
+	res, err := r.writer.Exec(`UPDATE service_requests SET status='cancelled',is_available=false,terminated_at=$1,termination_reason=$2,updated_at=now() WHERE id=$3 AND (customer_id=$4 OR target_isp_id=$4 OR assigned_isp_id=$4 OR target_technician_id=$4 OR assigned_technician_id=$4) AND deleted_at IS NULL`, endedAt, reason, requestID, actorID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
 		return sql.ErrNoRows
 	}
 	return nil

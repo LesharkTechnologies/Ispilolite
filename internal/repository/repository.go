@@ -74,6 +74,7 @@ type TechnicianRepository interface {
 	GetPostByID(postID string) (*models.TechnicianPost, error)
 	GetPostsByTechnician(technicianID string) ([]*models.TechnicianPost, error)
 	ListPublishedPosts(serviceType string, limit int) ([]*models.TechnicianPost, error)
+	GetCompanyLinks(technicianID string) ([]map[string]interface{}, error)
 }
 
 type JobRequestRepository interface {
@@ -88,6 +89,14 @@ type JobRequestRepository interface {
 	SetAvailability(requestID, customerID string, available bool) error
 	DeleteJobRequest(requestID, customerID string) error
 	UpdateJobStatus(requestID, actorID, status string) error
+	AssignTechnician(requestID, ispID, technicianID string) (*models.JobRequest, error)
+	TerminateJob(requestID, actorID, reason string, endedAt time.Time) error
+}
+
+type CompanyRepository interface {
+	LinkTechnician(ispID, technicianID string) (string, error)
+	ListCompanyTechnicians(ispID string) ([]*models.User, error)
+	EndTechnicianLink(ispID, technicianID string, endedAt time.Time) error
 }
 
 type LocationRepository interface {

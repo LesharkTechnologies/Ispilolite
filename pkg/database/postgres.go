@@ -135,10 +135,12 @@ func InitDB(configPath string) error {
 		_ = DBReader.Close()
 		return fmt.Errorf("failed to ping reader database: %w", err)
 	}
-	if err := runMigrations(ctx, getenv("MIGRATIONS_PATH", "migrations")); err != nil {
-		_ = DBWriter.Close()
-		_ = DBReader.Close()
-		return fmt.Errorf("database migrations failed: %w", err)
+	if os.Getenv("SKIP_MIGRATIONS") != "true" {
+		if err := runMigrations(ctx, getenv("MIGRATIONS_PATH", "migrations")); err != nil {
+			_ = DBWriter.Close()
+			_ = DBReader.Close()
+			return fmt.Errorf("database migrations failed: %w", err)
+		}
 	}
 	if err := verifySchema(ctx, DBWriter); err != nil {
 		_ = DBWriter.Close()
@@ -152,6 +154,15 @@ func InitDB(configPath string) error {
 	}
 	log.Println("database connection successful; schema ready")
 	return nil
+}
+
+// RunMigrations executes the versioned migration set for the configured
+// writer database. Production startup can skip this and use cmd/migrate.
+func RunMigrations(ctx context.Context, dir string) error {
+	if dir == "" {
+		dir = "migrations"
+	}
+	return runMigrations(ctx, dir)
 }
 
 func runMigrations(ctx context.Context, dir string) error {

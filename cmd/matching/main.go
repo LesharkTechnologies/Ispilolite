@@ -13,10 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"ispilolite/pkg/monitoring"
-	"ispilolite/pkg/telemetry"
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/services/matching"
+	"ispilolite/pkg/database"
+	"ispilolite/pkg/monitoring"
+	"ispilolite/pkg/telemetry"
 )
 
 func main() {
@@ -25,6 +26,10 @@ func main() {
 		log.Fatalf("telemetry startup failed: %v", err)
 	}
 	defer shutdownTelemetry(context.Background())
+	if err := database.InitDB(env("CONFIG_PATH", "config/config.yaml")); err != nil {
+		log.Fatalf("database startup failed: %v", err)
+	}
+	defer database.CloseDB()
 	service := matching.NewMatchingService(postgres.NewMatchingRepository(), nil)
 	service.StartExpiryWorker(context.Background(), time.Hour, 24*time.Hour)
 	mux := http.NewServeMux()

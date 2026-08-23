@@ -13,7 +13,7 @@ func (r *reviewRepo) CreateReview(v *models.Review) error {
 	if v.Status == "" {
 		v.Status = "pending"
 	}
-	_, err := r.writer.Exec(`INSERT INTO reviews (id,target_id,target_type,user_id,rating,comment,status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)`, v.ID, v.TargetID, v.TargetType, v.UserID, v.Rating, v.Comment, v.Status, v.CreatedAt)
+	_, err := r.writer.Exec(`INSERT INTO reviews (id,target_id,target_type,user_id,company_id,engagement_id,rating,comment,status,created_at,updated_at) VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10,$10)`, v.ID, v.TargetID, v.TargetType, v.UserID, v.CompanyID, v.EngagementID, v.Rating, v.Comment, v.Status, v.CreatedAt)
 	return err
 }
 func (r *reviewRepo) GetReviewsByTarget(id, kind string) ([]*models.Review, error) {

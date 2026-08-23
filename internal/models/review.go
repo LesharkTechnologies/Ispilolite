@@ -6,6 +6,8 @@ type Review struct {
 	ID             string    `json:"id" db:"id"`
 	TargetID       string    `json:"target_id" db:"target_id"`
 	TargetType     string    `json:"target_type" db:"target_type"`
+	CompanyID      string    `json:"company_id,omitempty" db:"company_id"`
+	EngagementID   string    `json:"engagement_id,omitempty" db:"engagement_id"`
 	UserID         string    `json:"user_id" db:"user_id"`
 	Rating         int       `json:"rating" db:"rating"`
 	Comment        string    `json:"comment" db:"comment"`

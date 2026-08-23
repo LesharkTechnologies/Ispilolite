@@ -1,16 +1,26 @@
 package jobrequest
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
 
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
+	"ispilolite/internal/services/matching"
 	"ispilolite/internal/utils"
 	"ispilolite/pkg/monitoring"
 	"ispilolite/pkg/queue"
 )
+
+type ProviderMatcher interface {
+	MatchProviders(context.Context, string, matching.MatchOptions) ([]matching.Match, error)
+}
+
+var defaultMatcher ProviderMatcher
+
+func SetMatcher(matcher ProviderMatcher) { defaultMatcher = matcher }
 
 var (
 	ErrNotFound       = errors.New("job request not found")
@@ -27,6 +37,12 @@ func NewService(repo repository.JobRequestRepository) *Service { return &Service
 
 func (s *Service) Create(customerID string, job *models.JobRequest) (*models.JobRequest, error) {
 	job.ID, job.CustomerID, job.Status, job.UpdatedAt = utils.GenerateID(), customerID, "open", time.Now().UTC()
+	if job.RequesterRole == "" {
+		job.RequesterRole = "customer"
+	}
+	if job.RequesterRole != "customer" && job.RequesterRole != "isp" && job.RequesterRole != "technician" && job.RequesterRole != "admin" {
+		return nil, ErrInvalidRequest
+	}
 	job.CreatedAt = job.UpdatedAt
 	job.Mode = strings.ToLower(strings.TrimSpace(job.Mode))
 	if job.Mode == "" {
@@ -48,6 +64,9 @@ func (s *Service) Create(customerID string, job *models.JobRequest) (*models.Job
 	}
 	monitoring.BusinessEvents.WithLabelValues("job.created", "success").Inc()
 	queue.PublishBestEffort(queue.JobExchange, "job.created", queue.Event{Type: "job.created", AggregateID: job.ID, Data: map[string]interface{}{"customer_id": job.CustomerID, "mode": job.Mode, "request_type": job.RequestType, "county": job.County, "town": job.Town}})
+	if job.Mode == "broadcast" && defaultMatcher != nil {
+		_, _ = defaultMatcher.MatchProviders(context.Background(), job.ID, matching.MatchOptions{RadiusKM: 10, AvailabilityRequired: true})
+	}
 	return job, nil
 }
 func (s *Service) ListForCustomer(id, status string) ([]*models.JobRequest, error) {
@@ -64,6 +83,29 @@ func (s *Service) Apply(applicantID, role, requestID, message string, price floa
 		return ErrForbidden
 	}
 	return s.repo.ApplyToJob(&models.JobApplication{ID: utils.GenerateID(), RequestID: requestID, ApplicantID: applicantID, ApplicantRole: role, Message: message, ProposedPrice: price})
+}
+
+func (s *Service) AssignTechnician(ispID, requestID, technicianID string) (*models.JobRequest, error) {
+	if strings.TrimSpace(ispID) == "" || strings.TrimSpace(technicianID) == "" || strings.TrimSpace(requestID) == "" {
+		return nil, ErrInvalidRequest
+	}
+	repo, ok := s.repo.(interface {
+		AssignTechnician(string, string, string) (*models.JobRequest, error)
+	})
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return repo.AssignTechnician(requestID, ispID, technicianID)
+}
+
+func (s *Service) Terminate(requestID, actorID, reason string, endedAt time.Time) error {
+	repo, ok := s.repo.(interface {
+		TerminateJob(string, string, string, time.Time) error
+	})
+	if !ok {
+		return ErrNotFound
+	}
+	return repo.TerminateJob(requestID, actorID, reason, endedAt)
 }
 func (s *Service) Applications(customerID, requestID string) ([]*models.JobApplication, error) {
 	return s.repo.ListApplications(requestID, customerID)

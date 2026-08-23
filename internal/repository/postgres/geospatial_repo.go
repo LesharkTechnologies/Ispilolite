@@ -10,32 +10,61 @@ import (
 
 type GeospatialRepository struct{ db *sql.DB }
 
-func NewGeospatialRepository() *GeospatialRepository { return &GeospatialRepository{db: database.GetReader()} }
+func NewGeospatialRepository() *GeospatialRepository {
+	return &GeospatialRepository{db: database.GetReader()}
+}
 
 func (r *GeospatialRepository) NearbyISPs(ctx context.Context, lat, lon, radius float64, limit int) ([]*models.ISP, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT u.id,u.name,COALESCE(u.phone,''),COALESCE(u.rating,0),COALESCE(u.total_ratings,0),COALESCE(u.county,'') FROM users u JOIN isp_coverage_locations c ON c.isp_id=u.id JOIN locations l ON l.id=c.location_id WHERE u.role='isp' AND u.status='active' AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL AND (6371*2*asin(sqrt(power(sin(radians(l.latitude-$1)/2),2)+cos(radians($1))*cos(radians(l.latitude))*power(sin(radians(l.longitude-$2)/2),2)))) <= $3 ORDER BY u.rating DESC LIMIT $4`, lat, lon, radius, limit)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	out := []*models.ISP{}
-	for rows.Next() { v := &models.ISP{}; if err := rows.Scan(&v.ID,&v.Name,&v.CustomerCareNumber,&v.Rating,&v.ReviewCount,&v.County); err != nil { return nil, err }; out = append(out,v) }
+	for rows.Next() {
+		v := &models.ISP{}
+		if err := rows.Scan(&v.ID, &v.Name, &v.CustomerCareNumber, &v.Rating, &v.ReviewCount, &v.County); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
 	return out, rows.Err()
 }
 
 func (r *GeospatialRepository) NearbyTechnicians(ctx context.Context, lat, lon, radius float64, skills []string) ([]*models.Technician, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT u.id,u.id,u.name,COALESCE(u.phone,''),COALESCE(u.email,''),COALESCE(u.isp_id::text,''),COALESCE(u.rating,0),COALESCE(u.total_ratings,0),COALESCE(u.county,'') FROM users u WHERE u.role='technician' AND u.status='active' ORDER BY u.rating DESC LIMIT 100`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	out := []*models.Technician{}
-	for rows.Next() { v := &models.Technician{}; if err := rows.Scan(&v.ID,&v.UserID,&v.Name,&v.Phone,&v.Email,&v.ISPID,&v.Rating,&v.ReviewCount,&v.County); err != nil { return nil, err }; out = append(out,v) }
+	for rows.Next() {
+		v := &models.Technician{}
+		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &v.Phone, &v.Email, &v.ISPID, &v.Rating, &v.ReviewCount, &v.County); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
 	return out, rows.Err()
 }
 
-func (r *GeospatialRepository) CheckCoverage(ctx context.Context, lat, lon float64) ([]*models.ISP, error) { return r.NearbyISPs(ctx,lat,lon,10,100) }
+func (r *GeospatialRepository) CheckCoverage(ctx context.Context, lat, lon float64) ([]*models.ISP, error) {
+	return r.NearbyISPs(ctx, lat, lon, 10, 100)
+}
 
 func (r *GeospatialRepository) SearchLocations(ctx context.Context, query, kind string, limit int) ([]*models.Location, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id,name,type,COALESCE(parent_id::text,''),county,sub_county,ward,created_at,status,is_verified,submission_count,popularity_score FROM locations WHERE name ILIKE '%'||$1||'%' AND ($2='' OR type=$2) ORDER BY popularity_score DESC,name LIMIT $3`, query, kind, limit)
-	if err != nil { return nil, err }; defer rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	out := []*models.Location{}
-	for rows.Next() { v := &models.Location{}; if err := rows.Scan(&v.ID,&v.Name,&v.Type,&v.ParentID,&v.County,&v.SubCounty,&v.Ward,&v.CreatedAt,&v.Status,&v.IsVerified,&v.SubmissionCount,&v.PopularityScore); err != nil { return nil, err }; out=append(out,v) }
+	for rows.Next() {
+		v := &models.Location{}
+		if err := rows.Scan(&v.ID, &v.Name, &v.Type, &v.ParentID, &v.County, &v.SubCounty, &v.Ward, &v.CreatedAt, &v.Status, &v.IsVerified, &v.SubmissionCount, &v.PopularityScore); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
 	return out, rows.Err()
 }

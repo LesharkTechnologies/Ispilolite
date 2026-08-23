@@ -13,8 +13,9 @@ import (
 
 // Claims defines the structure of the JWT claims.
 type Claims struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
+	UserID   string `json:"user_id"`
+	Role     string `json:"role"`
+	TokenUse string `json:"token_use"`
 	jwt.StandardClaims
 }
 
@@ -73,6 +74,10 @@ func AuthMiddleware(requiredRole string) func(http.Handler) http.Handler {
 				http.Error(w, "Unauthorized: token revoked", http.StatusUnauthorized)
 				return
 			}
+			if claims.TokenUse != "access" {
+				http.Error(w, "Unauthorized: access token required", http.StatusUnauthorized)
+				return
+			}
 
 			// If a specific role is required, check for it.
 			if requiredRole != "" && claims.Role != requiredRole {
@@ -107,6 +112,9 @@ func extractTokenFromHeader(r *http.Request) (string, error) {
 func validateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
 		return jwtKey, nil
 	})
 

@@ -24,6 +24,8 @@ type JobRepository interface {
 	SetAvailability(id, customerID string, available bool) error
 	DeleteJobRequest(id, customerID string) error
 	UpdateJobStatus(id, actor, status string) error
+	AssignTechnician(requestID, ispID, technicianID string) (*models.JobRequest, error)
+	TerminateJob(requestID, actorID, reason string, endedAt time.Time) error
 }
 
 var _ JobRepository = (*CachedJobRepository)(nil)
@@ -126,4 +128,32 @@ func (r *CachedJobRepository) UpdateJobStatus(id, actor, status string) error {
 	}
 	r.invalidate(id)
 	return nil
+}
+
+func (r *CachedJobRepository) AssignTechnician(requestID, ispID, technicianID string) (*models.JobRequest, error) {
+	job, ok := r.next.(interface {
+		AssignTechnician(string, string, string) (*models.JobRequest, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("technician assignment is not configured")
+	}
+	result, err := job.AssignTechnician(requestID, ispID, technicianID)
+	if err == nil {
+		r.invalidate(requestID)
+	}
+	return result, err
+}
+
+func (r *CachedJobRepository) TerminateJob(requestID, actorID, reason string, endedAt time.Time) error {
+	repo, ok := r.next.(interface {
+		TerminateJob(string, string, string, time.Time) error
+	})
+	if !ok {
+		return fmt.Errorf("job termination is not configured")
+	}
+	err := repo.TerminateJob(requestID, actorID, reason, endedAt)
+	if err == nil {
+		r.invalidate(requestID)
+	}
+	return err
 }

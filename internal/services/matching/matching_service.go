@@ -41,7 +41,13 @@ type Repository interface {
 	AcceptQuotation(context.Context, *Quotation) (*Job, error)
 }
 
-type ExpiryRepository interface { ExpireStale(context.Context, time.Time) error }
+type ExpiryRepository interface {
+	ExpireStale(context.Context, time.Time) error
+}
+type MatchActionRepository interface {
+	Respond(context.Context, string, string) error
+	Decline(context.Context, string, string) error
+}
 type Notifier interface {
 	Notify(context.Context, string, string, map[string]interface{}) error
 }
@@ -113,13 +119,52 @@ func (s *MatchingService) MatchProviders(ctx context.Context, id string, o Match
 	if e != nil {
 		return nil, fmt.Errorf("match providers: %w", e)
 	}
-	for _, match := range m { if s.notifier != nil { _ = s.notifier.Notify(ctx, match.ProviderID, "service_request.matched", map[string]interface{}{"request_id": id, "score": match.MatchScore}) } }
+	for _, match := range m {
+		if s.notifier != nil {
+			_ = s.notifier.Notify(ctx, match.ProviderID, "service_request.matched", map[string]interface{}{"request_id": id, "score": match.MatchScore})
+		}
+	}
 	return m, nil
 }
 
 func (s *MatchingService) StartExpiryWorker(ctx context.Context, interval, expiry time.Duration) {
-	repo, ok := s.repo.(ExpiryRepository); if !ok { return }; if interval <= 0 { interval=time.Hour }; if expiry <= 0 { expiry=24*time.Hour }
-	go func(){ ticker:=time.NewTicker(interval); defer ticker.Stop(); for { select { case <-ctx.Done(): return; case now:=<-ticker.C: _=repo.ExpireStale(ctx, now.Add(-expiry)) } } }()
+	repo, ok := s.repo.(ExpiryRepository)
+	if !ok {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	if expiry <= 0 {
+		expiry = 24 * time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				_ = repo.ExpireStale(ctx, now.Add(-expiry))
+			}
+		}
+	}()
+}
+
+func (s *MatchingService) Respond(ctx context.Context, matchID, providerID string) error {
+	repo, ok := s.repo.(MatchActionRepository)
+	if !ok {
+		return fmt.Errorf("match actions are not configured")
+	}
+	return repo.Respond(ctx, matchID, providerID)
+}
+func (s *MatchingService) Decline(ctx context.Context, matchID, providerID string) error {
+	repo, ok := s.repo.(MatchActionRepository)
+	if !ok {
+		return fmt.Errorf("match actions are not configured")
+	}
+	return repo.Decline(ctx, matchID, providerID)
 }
 func (s *MatchingService) CreateQuotation(ctx context.Context, q *Quotation) (*Quotation, error) {
 	if q == nil || q.RequestID == "" || q.ProviderID == "" || q.Amount < 0 {

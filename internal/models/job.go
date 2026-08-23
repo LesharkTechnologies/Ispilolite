@@ -20,6 +20,7 @@ type Installation struct {
 type JobRequest struct {
 	ID                   string            `json:"id" db:"id"`
 	CustomerID           string            `json:"customer_id" db:"customer_id"`
+	RequesterRole        string            `json:"requester_role" db:"requester_role"`
 	RequestType          string            `json:"request_type" db:"request_type"`
 	Mode                 string            `json:"mode" db:"mode"`
 	TargetISPID          string            `json:"target_isp_id,omitempty" db:"target_isp_id"`
@@ -35,6 +36,9 @@ type JobRequest struct {
 	Description          string            `json:"description" db:"description"`
 	Budget               float64           `json:"budget" db:"budget"`
 	PreferredDate        *time.Time        `json:"preferred_date,omitempty" db:"preferred_date"`
+	DeadlineAt           *time.Time        `json:"deadline_at,omitempty" db:"deadline_at"`
+	TerminatedAt         *time.Time        `json:"terminated_at,omitempty" db:"terminated_at"`
+	TerminationReason    string            `json:"termination_reason,omitempty" db:"termination_reason"`
 	Status               string            `json:"status" db:"status"`
 	IsAvailable          bool              `json:"is_available" db:"is_available"`
 	Applications         []*JobApplication `json:"applications,omitempty" db:"-"`

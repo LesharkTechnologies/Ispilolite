@@ -45,6 +45,10 @@ func (s *Service) SendInApp(userID, kind, title, message string, data map[string
 	return s.repository.CreateNotification(&models.Notification{ID: uuid.NewString(), UserID: userID, Type: strings.TrimSpace(kind), Title: strings.TrimSpace(title), Message: strings.TrimSpace(message), Data: data, CreatedAt: time.Now().UTC()})
 }
 
+func (s *Service) Notify(ctx context.Context, userID, event string, data map[string]interface{}) error {
+	return s.SendInApp(userID, event, event, event, data)
+}
+
 func (s *Service) Critical(ctx context.Context, component, message string, data map[string]interface{}) error {
 	if strings.TrimSpace(message) == "" {
 		return fmt.Errorf("critical alert message is required")
