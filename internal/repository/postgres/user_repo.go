@@ -90,7 +90,7 @@ func (r *userRepo) CreateUser(user *models.User) error {
 	defer tx.Rollback()
 	query := `
 		INSERT INTO users (id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, town, county, referral_code, locale)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16, $17, $18)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16, NULLIF($17,''), $18)
 	`
 	_, err = tx.Exec(
 		query,

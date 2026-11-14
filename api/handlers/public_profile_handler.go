@@ -20,7 +20,7 @@ type publicProfileReader interface {
 }
 
 type PublicProfileHandler struct {
-	repo publicProfileReader
+	repo  publicProfileReader
 	links *profilelink.Builder
 }
 

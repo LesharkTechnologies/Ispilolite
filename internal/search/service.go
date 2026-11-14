@@ -314,6 +314,7 @@ func (s *Service) envelope(p *Page, source, query string, page, pageSize, offset
 
 // SearchISPs backs GET /search/isp and /search/isp/{county}.
 func (s *Service) SearchISPs(ctx context.Context, p dto.SearchParams) dto.SearchResult {
+	p.Normalize()
 	query := p.Query
 	p = s.resolveLocation(ctx, p)
 	return s.run(ctx, "isp", query, p.Page, p.PageSize, p.Offset(), func(ctx context.Context, repo Repository) (*Page, error) {
@@ -323,6 +324,7 @@ func (s *Service) SearchISPs(ctx context.Context, p dto.SearchParams) dto.Search
 
 // SearchTechnicians backs GET /search/tech and /search/role.
 func (s *Service) SearchTechnicians(ctx context.Context, p dto.SearchParams) dto.SearchResult {
+	p.Normalize()
 	query := p.Query
 	p = s.resolveLocation(ctx, p)
 	return s.run(ctx, "tech", query, p.Page, p.PageSize, p.Offset(), func(ctx context.Context, repo Repository) (*Page, error) {
@@ -345,6 +347,7 @@ func (s *Service) resolveLocation(ctx context.Context, p dto.SearchParams) dto.S
 
 // SearchTechniciansNear backs GET /search/tech/near.
 func (s *Service) SearchTechniciansNear(ctx context.Context, p dto.GeoParams) dto.SearchResult {
+	p.SearchParams.Normalize()
 	return s.run(ctx, "near", p.Query, p.Page, p.PageSize, p.Offset(), func(ctx context.Context, repo Repository) (*Page, error) {
 		return repo.SearchTechniciansNear(ctx, p)
 	})
@@ -352,6 +355,7 @@ func (s *Service) SearchTechniciansNear(ctx context.Context, p dto.GeoParams) dt
 
 // SearchLocations backs GET /search/location.
 func (s *Service) SearchLocations(ctx context.Context, p dto.SearchParams) dto.SearchResult {
+	p.Normalize()
 	return s.run(ctx, "location", p.Query, p.Page, p.PageSize, p.Offset(), func(ctx context.Context, repo Repository) (*Page, error) {
 		return repo.SearchLocations(ctx, p)
 	})

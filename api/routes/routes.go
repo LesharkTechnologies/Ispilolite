@@ -32,8 +32,8 @@ import (
 	"ispilolite/pkg/database"
 	"ispilolite/pkg/idempotency"
 	"ispilolite/pkg/monitoring"
-	"ispilolite/pkg/profilelink"
 	appnotifications "ispilolite/pkg/notifications"
+	"ispilolite/pkg/profilelink"
 )
 
 // SetupRouter builds the application's Gin router. Business handlers still use

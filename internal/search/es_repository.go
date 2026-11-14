@@ -53,6 +53,7 @@ type esSearchResponse struct {
 
 // SearchISPs runs the ISP query and decodes []*models.ISP.
 func (r *ESRepository) SearchISPs(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	resp, err := r.doSearch(ctx, index.ISPIndex, buildISPQuery(p))
 	if err != nil {
 		return nil, err
@@ -70,6 +71,7 @@ func (r *ESRepository) SearchISPs(ctx context.Context, p dto.SearchParams) (*Pag
 
 // SearchTechnicians runs the technician query and decodes []*models.Technician.
 func (r *ESRepository) SearchTechnicians(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	resp, err := r.doSearch(ctx, index.TechnicianIndex, buildTechnicianQuery(p))
 	if err != nil {
 		return nil, err
@@ -84,6 +86,7 @@ func (r *ESRepository) SearchTechnicians(ctx context.Context, p dto.SearchParams
 // SearchTechniciansNear runs the geo query; distance_km is filled from the sort
 // value returned by the _geo_distance sort.
 func (r *ESRepository) SearchTechniciansNear(ctx context.Context, p dto.GeoParams) (*Page, error) {
+	p.SearchParams.Normalize()
 	resp, err := r.doSearch(ctx, index.TechnicianIndex, buildTechnicianNearQuery(p))
 	if err != nil {
 		return nil, err
@@ -98,6 +101,7 @@ func (r *ESRepository) SearchTechniciansNear(ctx context.Context, p dto.GeoParam
 // SearchLocations runs the place query and surfaces a "did you mean" from the
 // term suggester when the top hit is weak.
 func (r *ESRepository) SearchLocations(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	resp, err := r.doSearch(ctx, index.LocationIndex, buildLocationQuery(p))
 	if err != nil {
 		return nil, err

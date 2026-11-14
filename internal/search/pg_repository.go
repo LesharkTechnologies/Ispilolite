@@ -37,6 +37,7 @@ func (r *PostgresRepository) Healthy(ctx context.Context) bool {
 
 // SearchISPs matches by name/coverage/area using ILIKE + trigram ranking.
 func (r *PostgresRepository) SearchISPs(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	p, place, err := r.expandLearnedPlace(ctx, p)
 	if err != nil {
 		return nil, err
@@ -131,6 +132,7 @@ func (r *PostgresRepository) SearchISPs(ctx context.Context, p dto.SearchParams)
 // SearchTechnicians matches technicians by name/role/skills/area. Roles and
 // skills are stored in join tables (technician_roles, technician_skills).
 func (r *PostgresRepository) SearchTechnicians(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	p, place, err := r.expandLearnedPlace(ctx, p)
 	if err != nil {
 		return nil, err
@@ -215,6 +217,7 @@ func (r *PostgresRepository) SearchTechnicians(ctx context.Context, p dto.Search
 // SearchTechniciansNear ranks by great-circle distance using the earthdistance
 // / cube extension (ll_to_earth). Radius defaults to defaultNearRadiusKM.
 func (r *PostgresRepository) SearchTechniciansNear(ctx context.Context, p dto.GeoParams) (*Page, error) {
+	p.SearchParams.Normalize()
 	if !p.HasPoint {
 		// No point supplied: degrade to a plain technician search.
 		return r.SearchTechnicians(ctx, p.SearchParams)
@@ -272,6 +275,7 @@ func (r *PostgresRepository) SearchTechniciansNear(ctx context.Context, p dto.Ge
 // SearchLocations matches administrative places and computes a "did you mean"
 // via trigram similarity when there are no strong matches.
 func (r *PostgresRepository) SearchLocations(ctx context.Context, p dto.SearchParams) (*Page, error) {
+	p.Normalize()
 	var (
 		where []string
 		args  []interface{}

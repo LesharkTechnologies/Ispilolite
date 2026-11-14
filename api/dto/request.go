@@ -336,6 +336,9 @@ func (p SearchParams) Offset() int {
 			}
 		}
 	}
+	if p.Page <= 1 || p.PageSize <= 0 {
+		return 0
+	}
 	return (p.Page - 1) * p.PageSize
 }
 
@@ -400,8 +403,8 @@ func ParseGeoParams(r *http.Request) GeoParams {
 	return gp
 }
 
-// normalize clamps paging into safe bounds.
-func (p *SearchParams) normalize() {
+// Normalize clamps paging into safe bounds.
+func (p *SearchParams) Normalize() {
 	if p.Page < 1 {
 		p.Page = defaultPage
 	}
@@ -411,6 +414,10 @@ func (p *SearchParams) normalize() {
 	if p.PageSize > maxPageSize {
 		p.PageSize = maxPageSize
 	}
+}
+
+func (p *SearchParams) normalize() {
+	p.Normalize()
 }
 
 func parseInt(s string, def int) int {
