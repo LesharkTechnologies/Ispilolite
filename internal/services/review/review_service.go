@@ -5,6 +5,7 @@ import (
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
 	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
 	"strings"
 	"time"
 )
@@ -15,6 +16,22 @@ func NewReviewService(r repository.ReviewRepository) *ReviewService { return &Re
 func (s *ReviewService) CreateReview(v *models.Review) error {
 	if v.Rating < 1 || v.Rating > 5 {
 		return fmt.Errorf("rating must be between 1 and 5")
+	}
+	photos, err := validation.CloudinaryURLs(v.PhotoURLs, 6)
+	if err != nil {
+		return err
+	}
+	v.PhotoURLs = photos
+	v.IsVerified = false
+	if v.JobRequestID != "" {
+		verified, err := s.repo.VerifyCompletedJob(v.JobRequestID, v.UserID, v.TargetID, v.TargetType)
+		if err != nil {
+			return err
+		}
+		if !verified {
+			return fmt.Errorf("job does not verify this review")
+		}
+		v.IsVerified = true
 	}
 	v.Status = "pending"
 	v.CreatedAt = time.Now().UTC()

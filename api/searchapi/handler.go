@@ -1,9 +1,11 @@
 package searchapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -145,12 +147,25 @@ func (h *Handler) Suggest(c *gin.Context) {
 		}
 	}
 
-	suggestions, source := h.svc.Suggest(c.Request.Context(), domain, prefix, size)
+	var suggestions []dto.Suggestion
+	var source string
+	if domain == "all" {
+		suggestions, source = h.svc.SuggestAcross(c.Request.Context(), prefix, size)
+	} else {
+		suggestions, source = h.svc.Suggest(c.Request.Context(), domain, prefix, size)
+	}
+	didYouMean := ""
+	if len(suggestions) == 0 && (domain == "location" || domain == "all") {
+		params := dto.ParseSearchParams(c.Request)
+		params.Query = prefix
+		didYouMean = h.svc.SearchLocations(c.Request.Context(), params).DidYouMean
+	}
 	c.JSON(http.StatusOK, dto.APIResponse{
 		Success: true,
 		Data: dto.SearchResult{
 			Items:       []interface{}{},
 			Suggestions: suggestions,
+			DidYouMean:  didYouMean,
 			Meta: dto.SearchMeta{
 				Source:   source,
 				Total:    len(suggestions),
@@ -163,10 +178,13 @@ func (h *Handler) Suggest(c *gin.Context) {
 
 // Health handles GET /search/health, reporting the ES circuit-breaker state.
 func (h *Handler) Health(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
 	c.JSON(http.StatusOK, dto.APIResponse{
 		Success: true,
 		Data: gin.H{
-			"breaker": h.svc.BreakerState(),
+			"breakers": h.svc.BreakerStates(),
+			"backends": h.svc.Health(ctx),
 		},
 	})
 }

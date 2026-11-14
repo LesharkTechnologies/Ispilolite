@@ -5,6 +5,7 @@ import (
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
 	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
 	"strings"
 	"time"
 )
@@ -32,6 +33,11 @@ func (s *Service) Search(skill string, available bool, limit int) ([]*models.Tec
 	return s.repo.SearchTechnicians(strings.TrimSpace(skill), available, limit)
 }
 func (s *Service) CreatePost(id string, p *models.TechnicianPost) (*models.TechnicianPost, error) {
+	media, err := validation.CloudinaryURLs(p.MediaURLs, 10)
+	if err != nil {
+		return nil, err
+	}
+	p.MediaURLs = media
 	p.ID = utils.GenerateID()
 	p.TechnicianID = id
 	p.Title = strings.TrimSpace(p.Title)
@@ -53,6 +59,11 @@ func (s *Service) CreatePost(id string, p *models.TechnicianPost) (*models.Techn
 	return p, nil
 }
 func (s *Service) UpdatePost(id, owner string, p *models.TechnicianPost) (*models.TechnicianPost, error) {
+	media, err := validation.CloudinaryURLs(p.MediaURLs, 10)
+	if err != nil {
+		return nil, err
+	}
+	p.MediaURLs = media
 	p.ID = id
 	p.TechnicianID = owner
 	p.Title = strings.TrimSpace(p.Title)

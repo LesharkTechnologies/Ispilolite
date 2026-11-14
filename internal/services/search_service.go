@@ -48,4 +48,6 @@ func (s *SearchService) Suggest(ctx context.Context, domain, prefix string, size
 	return s.service.Suggest(ctx, domain, prefix, size)
 }
 
-func (s *SearchService) BreakerState() string { return s.service.BreakerState() }
+func (s *SearchService) BreakerState(endpoint string) string {
+	return s.service.BreakerState(endpoint)
+}

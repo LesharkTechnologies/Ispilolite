@@ -202,13 +202,15 @@ func techDoc(t *models.Technician) map[string]interface{} {
 
 func locationDoc(l *models.Location) map[string]interface{} {
 	doc := map[string]interface{}{
-		"id":         l.ID,
-		"name":       strings.TrimSpace(l.Name),
-		"type":       l.Type,
-		"county":     l.County,
-		"sub_county": l.SubCounty,
-		"ward":       l.Ward,
-		"created_at": l.CreatedAt,
+		"id":               l.ID,
+		"name":             strings.TrimSpace(l.Name),
+		"type":             l.Type,
+		"county":           l.County,
+		"sub_county":       l.SubCounty,
+		"ward":             l.Ward,
+		"created_at":       l.CreatedAt,
+		"aliases":          l.Aliases,
+		"popularity_score": l.PopularityScore,
 	}
 	if l.Point != nil {
 		doc["point"] = l.Point

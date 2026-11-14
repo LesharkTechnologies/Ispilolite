@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"ispilolite/api/routes"
+	"ispilolite/internal/bootstrap"
 	"ispilolite/internal/middleware"
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/repository/redis"
 	authsvc "ispilolite/internal/services/auth"
-	"ispilolite/pkg/audit"
+	"ispilolite/pkg/config"
 	"ispilolite/pkg/database"
 	"ispilolite/pkg/monitoring"
 	"ispilolite/pkg/queue"
@@ -29,6 +30,17 @@ func main() {
 		log.Fatalf("telemetry startup failed: %v", err)
 	}
 	defer shutdownTelemetry(context.Background())
+
+	// Validate configuration up front. Load .env first so values placed there
+	// (not only real environment variables) are visible to the validator. In
+	// production this fails fast when a required secret (e.g. JWT_SECRET) is
+	// missing, instead of starting with a known-insecure development fallback.
+	database.LoadDotEnv(".env")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("configuration error: %v", err)
+	}
+
 	configPath := getenv("CONFIG_PATH", "config/config.yaml")
 	if err := database.InitDB(configPath); err != nil {
 		log.Fatalf("database startup check failed: %v", err)
@@ -36,17 +48,34 @@ func main() {
 	if err := database.InitRedis(configPath); err != nil {
 		log.Fatalf("redis startup check failed: %v", err)
 	}
+	if !database.Ready() {
+		log.Fatal("database and redis must be initialized before serving")
+	}
 
-	secret := getenv("JWT_SECRET", "ispilolite-dev-secret")
-	issuer := getenv("JWT_ISSUER", "ispilolite")
-	middleware.InitAuth(secret, issuer)
+	userRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		log.Fatalf("user repository: %v", err)
+	}
+	cacheRepo, err := redis.NewCacheRepo()
+	if err != nil {
+		log.Fatalf("cache repository: %v", err)
+	}
+	middleware.InitAuth(cfg.JWTSecret, cfg.JWTIssuer)
 
-	revocationService := authsvc.NewAuthService(postgres.NewUserRepo(), redis.NewCacheRepo())
+	revocationService := authsvc.NewAuthService(userRepo, cacheRepo)
 	middleware.SetRevocationChecker(revocationService.IsTokenRevoked)
+
+	handler, matcher, err := routes.SetupRouter()
+	if err != nil {
+		log.Fatalf("router startup failed: %v", err)
+	}
 
 	collectorStop := make(chan struct{})
 	monitoring.StartDBCollector(collectorStop, database.GetWriter(), database.GetReader())
-	audit.Configure(database.GetWriter(), os.Getenv("AUDIT_ARCHIVE_ROOT")).StartScheduler(context.Background(), time.Local, log.Default())
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	defer cancelWorkers()
+	bootstrap.StartBackgroundWorkers(workerCtx, matcher, database.GetWriter(), log.Default())
+
 	queueCtx, cancelQueue := context.WithCancel(context.Background())
 	var queueService *queue.Service
 	if rabbitURL := os.Getenv("RABBITMQ_URL"); rabbitURL != "" {
@@ -64,7 +93,9 @@ func main() {
 		}
 	}
 
-	srv := &http.Server{Addr: ":" + strconv.Itoa(getenvInt("PORT", 8001)), Handler: routes.SetupRouter(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}
+	// SSE streams can remain open for hours; a server-wide WriteTimeout would
+	// close them after 30s. The reverse proxy should enforce client limits.
+	srv := &http.Server{Addr: ":" + strconv.Itoa(cfg.Port), Handler: middleware.WriteDeadline(30 * time.Second)(handler), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second}
 	go func() {
 		log.Printf("ispilolite api listening on %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -77,6 +108,7 @@ func main() {
 	<-stop
 	close(collectorStop)
 	cancelQueue()
+	cancelWorkers()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {

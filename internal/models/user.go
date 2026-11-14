@@ -39,4 +39,20 @@ type User struct {
 	CompanyTechnicianID string       `json:"company_technician_id,omitempty" db:"company_technician_id"`
 	CompanyStartedAt    *time.Time   `json:"company_started_at,omitempty" db:"company_started_at"`
 	CompanyEndedAt      *time.Time   `json:"company_ended_at,omitempty" db:"company_ended_at"`
+	ReferralCode        string       `json:"referral_code,omitempty" db:"referral_code"`
+	ReferredByCode      string       `json:"-" db:"-"`
+	CreditBalance       float64      `json:"credit_balance" db:"credit_balance"`
+	Locale              string       `json:"locale" db:"locale"`
+}
+
+type Referral struct {
+	ID           string     `json:"id"`
+	ReferrerID   string     `json:"referrer_id"`
+	ReferredID   string     `json:"referred_id"`
+	ReferredName string     `json:"referred_name,omitempty"`
+	Code         string     `json:"code"`
+	Status       string     `json:"status"`
+	RewardAmount float64    `json:"reward_amount"`
+	QualifiedAt  *time.Time `json:"qualified_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }

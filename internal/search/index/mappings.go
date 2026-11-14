@@ -13,7 +13,7 @@
 package index
 
 // Index name constants. Prefixed to avoid collisions on a shared cluster.
-//declared in indices .go file
+// declared in indices .go file
 // sharedSettings defines custom analyzers reused across indices:
 //
 //   - autocomplete       : edge n-grams for as-you-type prefix matching.
@@ -140,6 +140,8 @@ var LocationMapping = `{
       "county":     { "type": "text", "analyzer": "folding", "fields": { "keyword": { "type": "keyword" } } },
       "sub_county": { "type": "text", "analyzer": "folding", "fields": { "keyword": { "type": "keyword" } } },
       "ward":       { "type": "text", "analyzer": "folding", "fields": { "keyword": { "type": "keyword" } } },
+	  "aliases":    { "type": "text", "analyzer": "folding" },
+	  "popularity_score": { "type": "float" },
       "point":      { "type": "geo_point" },
       "created_at": { "type": "date" }
     }

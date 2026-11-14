@@ -39,7 +39,7 @@ func (h *MatchingHandler) Match(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.service.MatchProviders(r.Context(), id, matching.MatchOptions{RadiusKM: 10})
 	if err != nil {
-		respondWithError(w, 500, err.Error())
+		respondWithInternalError(w, err)
 		return
 	}
 	if len(items) > limit {

@@ -18,8 +18,16 @@ type ISPHandler struct {
 	reviews *review.ReviewService
 }
 
-func NewISPHandler() *ISPHandler {
-	return &ISPHandler{service: isp.NewISPService(postgres.NewISPRepo()), reviews: review.NewReviewService(postgres.NewReviewRepo())}
+func NewISPHandler() (*ISPHandler, error) {
+	ispRepo, err := postgres.NewISPRepo()
+	if err != nil {
+		return nil, err
+	}
+	reviewRepo, err := postgres.NewReviewRepo()
+	if err != nil {
+		return nil, err
+	}
+	return &ISPHandler{service: isp.NewISPService(ispRepo), reviews: review.NewReviewService(reviewRepo)}, nil
 }
 func (h *ISPHandler) GetISPs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -35,7 +43,7 @@ func (h *ISPHandler) GetISPs(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to list ISPs")
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
 }
 func (h *ISPHandler) GetISPByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.Trim(pathParam(r.URL.Path, "/api/v1/isps/"), "/")
@@ -44,7 +52,7 @@ func (h *ISPHandler) GetISPByID(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 404, "ISP not found")
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: item})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: item})
 }
 func (h *ISPHandler) GetISPPackages(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(pathParam(r.URL.Path, "/api/v1/isps/"), "/packages")
@@ -53,7 +61,7 @@ func (h *ISPHandler) GetISPPackages(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to list ISP packages")
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
 }
 func (h *ISPHandler) GetISPReviews(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(pathParam(r.URL.Path, "/api/v1/isps/"), "/reviews")
@@ -62,24 +70,26 @@ func (h *ISPHandler) GetISPReviews(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to list reviews")
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
 }
 func (h *ISPHandler) CreateISPReview(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(pathParam(r.URL.Path, "/api/v1/isps/"), "/reviews")
 	var req struct {
-		Rating  int    `json:"rating"`
-		Comment string `json:"comment"`
+		Rating       int      `json:"rating"`
+		Comment      string   `json:"comment"`
+		JobRequestID string   `json:"job_request_id,omitempty"`
+		PhotoURLs    []string `json:"photo_urls,omitempty"`
 	}
 	if decodeJSON(w, r, &req) != nil || req.Rating < 1 || req.Rating > 5 {
 		respondWithError(w, 400, "rating must be between 1 and 5")
 		return
 	}
-	v := &models.Review{ID: utils.GenerateID(), TargetID: id, TargetType: "isp", UserID: userIDFromContext(r.Context()), Rating: req.Rating, Comment: req.Comment}
+	v := &models.Review{ID: utils.GenerateID(), TargetID: id, TargetType: "isp", UserID: userIDFromContext(r.Context()), Rating: req.Rating, Comment: req.Comment, JobRequestID: req.JobRequestID, PhotoURLs: req.PhotoURLs}
 	if err := h.reviews.CreateReview(v); err != nil {
-		respondWithError(w, 500, "failed to create review")
+		respondWithErrorRaw(w, 400, err.Error())
 		return
 	}
-	respondWithJSON(w, 201,  dto.APIResponse{Success: true, Data: v})
+	respondWithJSON(w, 201, dto.APIResponse{Success: true, Data: v})
 }
 func (h *ISPHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 	filter := packageFilter(r)
@@ -88,7 +98,7 @@ func (h *ISPHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, err.Error())
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: map[string]interface{}{"packages": items, "county": filter.County}})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]interface{}{"packages": items, "county": filter.County}})
 }
 func (h *ISPHandler) ListPackageUnits(w http.ResponseWriter, r *http.Request) {
 	items, err := h.service.ListPackageUnits(r.URL.Query().Get("dimension"))
@@ -96,7 +106,7 @@ func (h *ISPHandler) ListPackageUnits(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, err.Error())
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
 }
 func floatQuery(v string) float64 { n, _ := strconv.ParseFloat(v, 64); return n }
 func intQuery(v string) int       { n, _ := strconv.Atoi(v); return n }

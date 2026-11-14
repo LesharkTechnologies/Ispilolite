@@ -11,8 +11,16 @@ type coverageRepository struct{ dbReader, dbWriter *sql.DB }
 
 const joinedLocationColumns = `l.id, l.name, l.type, COALESCE(l.parent_id::text, ''), COALESCE(l.county, ''), COALESCE(l.sub_county, ''), COALESCE(l.ward, ''), l.latitude, l.longitude, l.status, l.is_verified, l.submission_count, l.popularity_score, l.created_at`
 
-func NewCoverageRepository() *coverageRepository {
-	return &coverageRepository{dbReader: database.GetReader(), dbWriter: database.GetWriter()}
+func NewCoverageRepository() (*coverageRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &coverageRepository{dbReader: reader, dbWriter: writer}, nil
 }
 
 func (r *coverageRepository) ListISPCoverage(ispID, county string) ([]*models.Location, error) {

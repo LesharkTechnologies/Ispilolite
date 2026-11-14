@@ -10,8 +10,12 @@ import (
 
 type GeospatialRepository struct{ db *sql.DB }
 
-func NewGeospatialRepository() *GeospatialRepository {
-	return &GeospatialRepository{db: database.GetReader()}
+func NewGeospatialRepository() (*GeospatialRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	return &GeospatialRepository{db: reader}, nil
 }
 
 func (r *GeospatialRepository) NearbyISPs(ctx context.Context, lat, lon, radius float64, limit int) ([]*models.ISP, error) {

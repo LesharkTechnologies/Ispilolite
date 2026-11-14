@@ -34,26 +34,49 @@ type ISPEndpointsHandler struct {
 }
 
 // NewISPEndpointsHandler creates a new ISPEndpointsHandler.
-func NewISPEndpointsHandler() *ISPEndpointsHandler {
-	ispRepo := postgres.NewISPRepo()
-	ispService := isp.NewISPService(ispRepo)
-	installationRepo := postgres.NewInstallationRepo()
-	installationService := installation.NewInstallationService(installationRepo)
-	userRepo := postgres.NewUserRepo()
-	userService := user.NewUserService(userRepo)
-	authService := authsvc.NewAuthService(userRepo, redis.NewCacheRepo())
-	coverageService := coverage.NewService(postgres.NewCoverageRepository(), postgres.NewNotificationRepository())
-	jobRequestService := jobrequest.NewService(postgres.NewJobRequestRepo())
+func NewISPEndpointsHandler() (*ISPEndpointsHandler, error) {
+	ispRepo, err := postgres.NewISPRepo()
+	if err != nil {
+		return nil, err
+	}
+	installationRepo, err := postgres.NewInstallationRepo()
+	if err != nil {
+		return nil, err
+	}
+	userRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
+	}
+	cacheRepo, err := redis.NewCacheRepo()
+	if err != nil {
+		return nil, err
+	}
+	coverageRepo, err := postgres.NewCoverageRepository()
+	if err != nil {
+		return nil, err
+	}
+	notificationRepo, err := postgres.NewNotificationRepository()
+	if err != nil {
+		return nil, err
+	}
+	jobRepo, err := postgres.NewJobRequestRepo()
+	if err != nil {
+		return nil, err
+	}
+	companyRepo, err := postgres.NewCompanyRepository()
+	if err != nil {
+		return nil, err
+	}
 
 	return &ISPEndpointsHandler{
-		ispService:          ispService,
-		installationService: installationService,
-		userService:         userService,
-		authService:         authService,
-		coverageService:     coverageService,
-		jobRequestService:   jobRequestService,
-		companyRepository:   postgres.NewCompanyRepository(),
-	}
+		ispService:          isp.NewISPService(ispRepo),
+		installationService: installation.NewInstallationService(installationRepo),
+		userService:         user.NewUserService(userRepo),
+		authService:         authsvc.NewAuthService(userRepo, cacheRepo),
+		coverageService:     coverage.NewService(coverageRepo, notificationRepo),
+		jobRequestService:   jobrequest.NewService(jobRepo),
+		companyRepository:   companyRepo,
+	}, nil
 }
 
 func (h *ISPEndpointsHandler) LinkTechnician(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +224,7 @@ func (h *ISPEndpointsHandler) StreamNotifications(w http.ResponseWriter, r *http
 
 // GetProfile returns the ISP's profile.
 func (h *ISPEndpointsHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-	ispID := r.Context().Value("userID").(string)
+	ispID := userIDFromContext(r.Context())
 	isp, err := h.ispService.GetISPByID(ispID)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "ISP not found")
@@ -227,7 +250,7 @@ func (h *ISPEndpointsHandler) UpdateProfile(w http.ResponseWriter, r *http.Reque
 
 // GetInstallations returns a list of the ISP's installations.
 func (h *ISPEndpointsHandler) GetInstallations(w http.ResponseWriter, r *http.Request) {
-	ispID := r.Context().Value("userID").(string)
+	ispID := userIDFromContext(r.Context())
 	installations, err := h.installationService.GetInstallationsByISPID(ispID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get installations")
@@ -273,7 +296,7 @@ func (h *ISPEndpointsHandler) UpdateInstallation(w http.ResponseWriter, r *http.
 
 // GetTechnicians returns a list of the ISP's technicians.
 func (h *ISPEndpointsHandler) GetTechnicians(w http.ResponseWriter, r *http.Request) {
-	ispID := r.Context().Value("userID").(string)
+	ispID := userIDFromContext(r.Context())
 	technicians, err := h.userService.GetTechniciansByISPID(ispID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get technicians")
@@ -298,9 +321,9 @@ func (h *ISPEndpointsHandler) AddTechnician(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusInternalServerError, "failed to create technician")
 		return
 	}
-	technician.ISP_ID, technician.UpdatedAt = userIDFromContext(r.Context()), time.Now().UTC()
-	if err := h.userService.UpdateUser(technician); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed to assign technician")
+	companyID, err := h.companyRepository.LinkTechnician(userIDFromContext(r.Context()), technician.ID)
+	if err != nil {
+		respondWithInternalError(w, err)
 		return
 	}
 	_, expiresIn, err := h.authService.IssueOTP(technician.ID)
@@ -308,7 +331,7 @@ func (h *ISPEndpointsHandler) AddTechnician(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusInternalServerError, "failed to send technician verification code")
 		return
 	}
-	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "technician registered; phone verification required", Data: map[string]any{"technician_id": technician.ID, "expires_in": expiresIn}})
+	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "technician registered; phone verification required", Data: map[string]any{"technician_id": technician.ID, "company_technician_id": companyID, "expires_in": expiresIn}})
 }
 
 // RemoveTechnician removes a technician from the ISP.
@@ -320,10 +343,18 @@ func (h *ISPEndpointsHandler) RemoveTechnician(w http.ResponseWriter, r *http.Re
 		respondWithError(w, http.StatusNotFound, "technician not found")
 		return
 	}
-	technician.ISP_ID, technician.UpdatedAt = "", time.Now().UTC()
-	if err := h.userService.UpdateUser(technician); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed to remove technician")
-		return
+	if err := h.companyRepository.EndTechnicianLink(ispID, technicianID, time.Now().UTC()); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			respondWithInternalError(w, err)
+			return
+		}
+		// Legacy technicians created before company links were recorded may
+		// only have users.isp_id. Clear that old association as well.
+		technician.ISP_ID, technician.UpdatedAt = "", time.Now().UTC()
+		if err := h.userService.UpdateUser(technician); err != nil {
+			respondWithInternalError(w, err)
+			return
+		}
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "technician removed"})
 }
@@ -339,7 +370,7 @@ func (h *ISPEndpointsHandler) CreatePackage(w http.ResponseWriter, r *http.Reque
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	pkg := &models.ISPPackage{ID: utils.GenerateID(), ISP_ID: userIDFromContext(r.Context()), Name: req.Name, Category: req.Category, SpeedValue: req.SpeedValue, SpeedUnitID: req.SpeedUnitID, BasePrice: req.BasePrice, BillingCycle: req.BillingCycle, CapacityType: req.CapacityType, CapacityValue: req.CapacityValue, CapacityUnitID: req.CapacityUnitID, IsActive: active, Description: strings.TrimSpace(req.Description)}
+	pkg := &models.ISPPackage{ID: utils.GenerateID(), ISP_ID: userIDFromContext(r.Context()), Name: req.Name, Category: req.Category, SpeedValue: req.SpeedValue, SpeedUnitID: req.SpeedUnitID, BasePrice: req.BasePrice, BillingCycle: req.BillingCycle, CapacityType: req.CapacityType, CapacityValue: req.CapacityValue, CapacityUnitID: req.CapacityUnitID, IsActive: active, Description: strings.TrimSpace(req.Description), Tier: req.Tier, OveragePrice: req.OveragePrice}
 	if err := h.ispService.CreatePackage(pkg); err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
@@ -359,7 +390,7 @@ func (h *ISPEndpointsHandler) UpdatePackage(w http.ResponseWriter, r *http.Reque
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	pkg := &models.ISPPackage{ID: packageID, ISP_ID: userIDFromContext(r.Context()), Name: req.Name, Category: req.Category, SpeedValue: req.SpeedValue, SpeedUnitID: req.SpeedUnitID, BasePrice: req.BasePrice, BillingCycle: req.BillingCycle, CapacityType: req.CapacityType, CapacityValue: req.CapacityValue, CapacityUnitID: req.CapacityUnitID, IsActive: active, Description: strings.TrimSpace(req.Description)}
+	pkg := &models.ISPPackage{ID: packageID, ISP_ID: userIDFromContext(r.Context()), Name: req.Name, Category: req.Category, SpeedValue: req.SpeedValue, SpeedUnitID: req.SpeedUnitID, BasePrice: req.BasePrice, BillingCycle: req.BillingCycle, CapacityType: req.CapacityType, CapacityValue: req.CapacityValue, CapacityUnitID: req.CapacityUnitID, IsActive: active, Description: strings.TrimSpace(req.Description), Tier: req.Tier, OveragePrice: req.OveragePrice}
 	if err := h.ispService.UpdatePackage(pkg); err != nil {
 		if err == sql.ErrNoRows {
 			respondWithError(w, http.StatusNotFound, "package not found")
@@ -435,4 +466,28 @@ func (h *ISPEndpointsHandler) UpdateSubscription(w http.ResponseWriter, r *http.
 		return
 	}
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "subscription updated"})
+}
+
+func (h *ISPEndpointsHandler) RecordSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/subscriptions/")
+	var req dto.PackageUsageRequest
+	if id == "" || decodeJSON(w, r, &req) != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, "invalid usage event")
+		return
+	}
+	var measuredAt time.Time
+	if req.MeasuredAt != "" {
+		var err error
+		measuredAt, err = time.Parse(time.RFC3339, req.MeasuredAt)
+		if err != nil {
+			respondWithErrorRaw(w, http.StatusBadRequest, "measured_at must be RFC3339")
+			return
+		}
+	}
+	subscription, err := h.ispService.RecordUsage(id, userIDFromContext(r.Context()), req.ExternalRef, req.UsageValue, measuredAt)
+	if err != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: subscription})
 }

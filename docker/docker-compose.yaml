@@ -1,11 +1,69 @@
-version: "3.9"
+# Self-contained backend stack.
+#
+# Run from the repository root so the root .env is used for interpolation:
+#   docker compose --env-file .env -f docker/docker-compose.yaml up -d --build
+#
+# Only the API and the monitoring UIs are published, and only on loopback.
+# Postgres, Redis, RabbitMQ, and Elasticsearch must never be exposed publicly.
+
+x-app-env: &app-env
+  # Local single-host stack only. For production deploy with TLS-enabled
+  Postgres/Redis/RabbitMQ and production credentials, not this compose file.
+  ENVIRONMENT: development
+  CONFIG_PATH: /app/config/config.yaml
+  MIGRATIONS_PATH: /app/migrations
+  DATABASE_URL: postgres://${POSTGRES_USER:-ispilo}:${POSTGRES_PASSWORD:-ispilo-local}@postgres:5432/${POSTGRES_DB:-ispilolite}?sslmode=disable
+  DATABASE_READ_URL: postgres://${POSTGRES_USER:-ispilo}:${POSTGRES_PASSWORD:-ispilo-local}@postgres:5432/${POSTGRES_DB:-ispilolite}?sslmode=disable
+  DB_SSL_MODE: disable
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-ispilo}:${RABBITMQ_PASSWORD:-ispilo-local}@rabbitmq:5672/
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  # Compose uses a private bridge network; production scrapes must use an
+  # explicit bearer token or a monitoring-only listener.
+  METRICS_TOKEN: ""
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: docker/Dockerfile
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ispilo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ispilo-local}
+      POSTGRES_DB: ${POSTGRES_DB:-ispilolite}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ispilo} -d ${POSTGRES_DB:-ispilolite}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   rabbitmq:
     image: rabbitmq:3.13-management
+    restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      # AMQP stays on the internal network; the UI is loopback-only.
+      - "127.0.0.1:15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ispilo}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-ispilo-local}
@@ -13,26 +71,130 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
+  api:
+    build:
+      <<: *app-build
+      args:
+        TARGET: auth
+    image: ispilolite-api:local
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ../.env
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8001/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # One-shot schema migration. Run before deploying a new API image:
+  #   docker compose --env-file .env -f docker/docker-compose.yaml run --rm migrate
+  migrate:
+    profiles: ["tools"]
+    build:
+      <<: *app-build
+      args:
+        TARGET: migrate
+    image: ispilolite-migrate:local
+    env_file:
+      - ../.env
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Async SMS/push delivery worker. Enable explicitly:
+  #   docker compose --env-file .env -f docker/docker-compose.yaml --profile workers up -d
+  notification:
+    profiles: ["workers"]
+    build:
+      <<: *app-build
+      args:
+        TARGET: notification
+    image: ispilolite-notification:local
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ../.env
+    environment:
+      <<: *app-env
+      MONITORING_ADDR: ":9091"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9091/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   prometheus:
     image: prom/prometheus:v2.54.1
+    restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
+  # Exposes host metrics and the backup script's textfile metrics
+  # (ispilo_backup_last_success_timestamp_seconds).
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.textfile.directory=/var/lib/node_exporter/textfile"
+    ports:
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/lib/node_exporter/textfile:/var/lib/node_exporter/textfile:ro
 
   grafana:
     image: grafana/grafana:11.2.0
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -40,13 +202,17 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:1.60
+    restart: unless-stopped
     ports:
-      - "16686:16686"
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
 
 volumes:
+  postgres_data:
+  redis_data:
   rabbitmq_data:
   prometheus_data:
   grafana_data:
+  alertmanager_data:

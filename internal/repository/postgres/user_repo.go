@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/lib/pq"
@@ -66,19 +67,32 @@ type userRepo struct {
 	dbWriter *sql.DB
 }
 
-func NewUserRepo() *userRepo {
-	return &userRepo{
-		dbReader: database.GetReader(),
-		dbWriter: database.GetWriter(),
+func NewUserRepo() (*userRepo, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
 	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &userRepo{
+		dbReader: reader,
+		dbWriter: writer,
+	}, nil
 }
 
 func (r *userRepo) CreateUser(user *models.User) error {
+	tx, err := r.dbWriter.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	query := `
-		INSERT INTO users (id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, town, county)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO users (id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, town, county, referral_code, locale)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16, $17, $18)
 	`
-	_, err := r.dbWriter.Exec(
+	_, err = tx.Exec(
 		query,
 		user.ID,
 		user.Phone,
@@ -96,18 +110,34 @@ func (r *userRepo) CreateUser(user *models.User) error {
 		user.ISP_ID,
 		user.Town,
 		user.County,
+		user.ReferralCode,
+		user.Locale,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if user.ReferredByCode != "" {
+		result, err := tx.Exec(`INSERT INTO referrals(id,referrer_id,referred_id,code,status,created_at)
+			SELECT gen_random_uuid(),id,$2,upper($1),'pending',now() FROM users WHERE upper(referral_code)=upper($1) AND id<>$2`, user.ReferredByCode, user.ID)
+		if err != nil {
+			return err
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *userRepo) GetUserByUsername(username string) (*models.User, error) {
-	query := `SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, latitude, longitude, town, county FROM users WHERE lower(username) = lower($1)`
+	query := `SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status FROM users WHERE lower(username) = lower($1)`
 	return r.scanUser(r.dbReader.QueryRow(query, username))
 }
 
 func (r *userRepo) GetUserByPhone(phone string) (*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, latitude, longitude, town, county
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status
 		FROM users
 		WHERE phone = $1
 	`
@@ -136,6 +166,10 @@ func (r *userRepo) scanUser(row *sql.Row) (*models.User, error) {
 		&lng,
 		&user.Town,
 		&user.County,
+		&user.ReferralCode,
+		&user.CreditBalance,
+		&user.Locale,
+		&user.Status,
 	)
 	if err != nil {
 		return nil, err
@@ -146,7 +180,7 @@ func (r *userRepo) scanUser(row *sql.Row) (*models.User, error) {
 
 func (r *userRepo) GetUserByID(userID string) (*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, latitude, longitude, town, county
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status
 		FROM users
 		WHERE id = $1
 	`
@@ -171,6 +205,10 @@ func (r *userRepo) GetUserByID(userID string) (*models.User, error) {
 		&lng,
 		&user.Town,
 		&user.County,
+		&user.ReferralCode,
+		&user.CreditBalance,
+		&user.Locale,
+		&user.Status,
 	)
 	if err != nil {
 		return nil, err
@@ -178,11 +216,43 @@ func (r *userRepo) GetUserByID(userID string) (*models.User, error) {
 	return user, nil
 }
 
+func (r *userRepo) QualifyReferral(userID string, reward float64) error {
+	tx, err := r.dbWriter.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id, referrer, referred string
+	err = tx.QueryRow(`UPDATE referrals SET status='qualified',reward_amount=$2,qualified_at=now()
+		WHERE referred_id=$1 AND status='pending' RETURNING id,referrer_id,referred_id`, userID, reward).Scan(&id, &referrer, &referred)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range []struct{ user, kind string }{{referrer, "referrer_reward"}, {referred, "referee_reward"}} {
+		reference := "referral:" + id + ":" + entry.kind
+		result, err := tx.Exec(`INSERT INTO referral_credit_ledger(id,user_id,referral_id,entry_type,amount,reference)
+			VALUES(gen_random_uuid(),$1,$2,$3,$4,$5) ON CONFLICT(user_id,reference) DO NOTHING`, entry.user, id, entry.kind, reward, reference)
+		if err != nil {
+			return err
+		}
+		n, _ := result.RowsAffected()
+		if n > 0 {
+			if _, err = tx.Exec(`UPDATE users SET credit_balance=credit_balance+$1,updated_at=now() WHERE id=$2`, reward, entry.user); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 func (r *userRepo) UpdateUser(user *models.User) error {
 	query := `
 		UPDATE users
-		SET name = $1, email = $2, is_verified = $3, updated_at = $4, isp_id = $5, latitude = $6, longitude = $7, town = $8, county = $9
-		WHERE id = $10
+		SET name = $1, email = $2, is_verified = $3, updated_at = $4, isp_id = NULLIF($5,'')::uuid, latitude = $6, longitude = $7, town = $8, county = $9, locale=$10
+		WHERE id = $11
 	`
 	var lat, lng sql.NullFloat64
 	if user.Location != nil {
@@ -202,6 +272,7 @@ func (r *userRepo) UpdateUser(user *models.User) error {
 		lng,
 		user.Town,
 		user.County,
+		user.Locale,
 		user.ID,
 	)
 	return err
@@ -209,7 +280,7 @@ func (r *userRepo) UpdateUser(user *models.User) error {
 
 func (r *userRepo) GetUsersByStatus(status string) ([]*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, latitude, longitude, town, county
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county
 		FROM users
 		WHERE status = $1
 	`
@@ -257,7 +328,7 @@ func (r *userRepo) GetUsersByStatus(status string) ([]*models.User, error) {
 
 func (r *userRepo) GetTechniciansByISPID(ispID string) ([]*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, isp_id, latitude, longitude, town, county
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county
 		FROM users
 		WHERE isp_id = $1 AND role = 'technician'
 	`

@@ -1,3 +1,18 @@
+# Secrets - never commit
 .env
-core.exe
-geospacia.exematching.exe
+.env.*
+!.env.example
+
+# Build artifacts
+*.exe
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Local caches and runtime state
+.gocache/
+node_modules/
+backups/
+storage/
+*.log

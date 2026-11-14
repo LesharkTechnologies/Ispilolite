@@ -12,7 +12,13 @@ import (
 
 type VacancyHandler struct{ repo *postgres.VacancyRepository }
 
-func NewVacancyHandler() *VacancyHandler { return &VacancyHandler{postgres.NewVacancyRepository()} }
+func NewVacancyHandler() (*VacancyHandler, error) {
+	repo, err := postgres.NewVacancyRepository()
+	if err != nil {
+		return nil, err
+	}
+	return &VacancyHandler{repo}, nil
+}
 func (h *VacancyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req dto.VacancyRequest
 	if decodeJSON(w, r, &req) != nil || strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.ServiceType) == "" {

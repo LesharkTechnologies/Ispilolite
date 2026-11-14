@@ -120,7 +120,8 @@ func main() {
 	if pgRepo != nil {
 		fallback = pgRepo
 	}
-	svc := search.NewService(esRepo, fallback, search.DefaultServiceConfig(), logger)
+	svc := search.NewService(esRepo, fallback, search.DefaultServiceConfig(), logger).
+		WithHealthChecker(search.NewHealthChecker(esClient.ES()))
 
 	// --- HTTP (Gin) ---------------------------------------------------------
 	if env("GIN_MODE", "") == "" {

@@ -170,7 +170,7 @@ func (r *PostgresRepository) scanISPPage(ctx context.Context, query string, args
 // recommendation queries. Callers append WHERE/ORDER BY/LIMIT. It aggregates the
 // role/skill join tables into arrays, matching scanTechRow's expectations.
 const technicianListSelect = `
-	SELECT t.id, t.user_id, t.name, COALESCE(t.avatar_url,''), t.isp_id, t.isp_name,
+	SELECT t.id, COALESCE(t.user_id::text,''), t.name, COALESCE(t.avatar_url,''), COALESCE(t.isp_id::text,''), t.isp_name,
 	       t.county, t.sub_county, t.village, t.rating, t.jobs_done, t.is_available,
 	       COALESCE(array_agg(DISTINCT tr.role) FILTER (WHERE tr.role IS NOT NULL), '{}') AS roles,
 	       COALESCE(array_agg(DISTINCT ts.skill) FILTER (WHERE ts.skill IS NOT NULL), '{}') AS skills
@@ -294,7 +294,7 @@ func (r *PostgresRepository) SimilarTechnicians(ctx context.Context, p dto.Recom
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COALESCE(array_agg(DISTINCT ts.skill) FILTER (WHERE ts.skill IS NOT NULL), '{}'),
 		       COALESCE(array_agg(DISTINCT tr.role)  FILTER (WHERE tr.role  IS NOT NULL), '{}'),
-		       MAX(t.isp_id), MAX(t.county)
+		       COALESCE(MAX(t.isp_id::text),''), MAX(t.county)
 		FROM technicians t
 		LEFT JOIN technician_skills ts ON ts.technician_id = t.id
 		LEFT JOIN technician_roles tr ON tr.technician_id = t.id
@@ -335,7 +335,7 @@ func (r *PostgresRepository) SimilarTechnicians(ctx context.Context, p dto.Recom
 		ORDER BY (
 			(SELECT count(*) FROM technician_skills ts2 WHERE ts2.technician_id = t.id AND ts2.skill = ANY($%d)) * 2.0
 			+ (SELECT count(*) FROM technician_roles tr2 WHERE tr2.technician_id = t.id AND tr2.role = ANY($%d)) * 2.0
-			+ CASE WHEN $%d <> '' AND t.isp_id = $%d THEN 3.0 ELSE 0 END
+			+ CASE WHEN $%d <> '' AND COALESCE(t.isp_id::text,'') = $%d THEN 3.0 ELSE 0 END
 			+ CASE WHEN $%d <> '' AND t.county ILIKE $%d THEN 1.0 ELSE 0 END
 			+ t.rating * 0.3
 		) DESC, t.rating DESC

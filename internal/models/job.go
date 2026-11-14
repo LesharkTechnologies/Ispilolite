@@ -45,6 +45,21 @@ type JobRequest struct {
 	CreatedAt            time.Time         `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time         `json:"updated_at" db:"updated_at"`
 	DeletedAt            *time.Time        `json:"deleted_at,omitempty" db:"deleted_at"`
+	WarrantyDays         int               `json:"warranty_days" db:"warranty_days"`
+	WarrantyExpiresAt    *time.Time        `json:"warranty_expires_at,omitempty" db:"warranty_expires_at"`
+}
+
+type WarrantyClaim struct {
+	ID                   string    `json:"id"`
+	OriginalRequestID    string    `json:"original_request_id"`
+	ReplacementRequestID string    `json:"replacement_request_id,omitempty"`
+	CustomerID           string    `json:"customer_id"`
+	Description          string    `json:"description"`
+	PhotoURLs            []string  `json:"photo_urls,omitempty"`
+	Status               string    `json:"status"`
+	ResolutionNote       string    `json:"resolution_note,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type JobApplication struct {

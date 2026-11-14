@@ -4,13 +4,16 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	goredis "github.com/go-redis/redis/v8"
 )
 
+// RateLimiter is a Redis-backed fixed-window rate limiter keyed by IP + route.
 type RateLimiter struct {
 	client *goredis.Client
 	limit  int64
@@ -40,6 +43,8 @@ func (r *RateLimiter) Allow(ctx context.Context, key string) (bool, time.Duratio
 	}
 	return result[0] <= r.limit, time.Duration(result[1]) * time.Millisecond, nil
 }
+
+// Middleware applies the rate limiter to the next handler.
 func (r *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		key := clientIP(req) + ":" + routeBucket(req.URL.Path)
@@ -60,16 +65,95 @@ func (r *RateLimiter) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, req)
 	})
 }
-func clientIP(r *http.Request) string {
-	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); forwarded != "" {
-		return forwarded
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
+
+// proxyNets is the set of reverse proxies whose X-Forwarded-For header is
+// trusted. A request that does not arrive from one of these peers cannot
+// spoof its client IP.
+type proxyNets struct {
+	nets []*net.IPNet
 }
+
+func parseProxyNets(spec string) *proxyNets {
+	p := &proxyNets{}
+	for _, raw := range strings.Split(spec, ",") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		// Accept bare IPs as well as CIDR blocks.
+		if !strings.Contains(entry, "/") {
+			ip := net.ParseIP(entry)
+			if ip == nil {
+				continue
+			}
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			entry = ip.String() + "/" + strconv.Itoa(bits)
+		}
+		if _, network, err := net.ParseCIDR(entry); err == nil {
+			p.nets = append(p.nets, network)
+		}
+	}
+	return p
+}
+
+func (p *proxyNets) contains(ip net.IP) bool {
+	if p == nil || ip == nil {
+		return false
+	}
+	for _, network := range p.nets {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedProxies defaults to loopback only, which matches the documented
+// single-VPS deployment where Nginx runs on the same host. Set TRUSTED_PROXIES
+// to the proxy CIDRs (comma-separated) when Nginx lives elsewhere.
+var trustedProxies = sync.OnceValue(func() *proxyNets {
+	spec := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if spec == "" {
+		spec = "127.0.0.1/32,::1/128"
+	}
+	return parseProxyNets(spec)
+})
+
+func clientIP(r *http.Request) string {
+	return clientIPWithProxies(r, trustedProxies())
+}
+
+// clientIPWithProxies resolves the client address, only reading
+// X-Forwarded-For when the immediate peer is a trusted proxy. It walks the
+// header from right to left and returns the first address that is not itself a
+// trusted proxy, which defeats client-supplied header spoofing.
+func clientIPWithProxies(r *http.Request, proxies *proxyNets) string {
+	remote := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		remote = host
+	}
+
+	if !proxies.contains(net.ParseIP(remote)) {
+		return remote
+	}
+
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(parts[i])
+		ip := net.ParseIP(candidate)
+		if ip == nil {
+			continue
+		}
+		if !proxies.contains(ip) {
+			return ip.String()
+		}
+	}
+	return remote
+}
+
 func routeBucket(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) > 3 {

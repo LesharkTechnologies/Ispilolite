@@ -33,3 +33,24 @@ func TestHubDoesNotCrossUserBoundaries(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 }
+
+func TestHubPublishesOnlyMatchingTopic(t *testing.T) {
+	hub := NewHub()
+	updates, unsubscribe := hub.SubscribeTopic("job:j1")
+	defer unsubscribe()
+	hub.PublishTopic("job:j2", "job_status", map[string]string{"status": "completed"})
+	select {
+	case <-updates:
+		t.Fatal("event crossed topic boundary")
+	case <-time.After(20 * time.Millisecond):
+	}
+	hub.PublishTopic("job:j1", "job_status", map[string]string{"status": "completed"})
+	select {
+	case payload := <-updates:
+		if string(payload) == "" {
+			t.Fatal("empty topic payload")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("topic event was not published")
+	}
+}

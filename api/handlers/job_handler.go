@@ -20,7 +20,7 @@ func NewJobHandler(jobService JobService) *JobHandler { return &JobHandler{jobSe
 func (h *JobHandler) GetISPs(w http.ResponseWriter, r *http.Request) {
 	isps, err := h.jobService.GetISPs(r)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		respondWithInternalError(w, err)
 		return
 	}
 	respondWithJSON(w, http.StatusOK, isps)
@@ -38,7 +38,7 @@ func (h *JobHandler) GetISPByID(w http.ResponseWriter, r *http.Request) {
 			respondWithError(w, http.StatusNotFound, "ISP not found")
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		respondWithInternalError(w, err)
 		return
 	}
 	respondWithJSON(w, http.StatusOK, isp)

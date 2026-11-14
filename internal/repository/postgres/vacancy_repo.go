@@ -9,7 +9,13 @@ import (
 
 type VacancyRepository struct{ db *sql.DB }
 
-func NewVacancyRepository() *VacancyRepository { return &VacancyRepository{database.GetWriter()} }
+func NewVacancyRepository() (*VacancyRepository, error) {
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &VacancyRepository{writer}, nil
+}
 func (r *VacancyRepository) Create(v *models.ISPVacancy) error {
 	_, err := r.db.Exec(`INSERT INTO isp_vacancies(id,isp_id,title,description,service_type,slots,deadline_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, v.ID, v.ISPID, v.Title, v.Description, v.ServiceType, v.Slots, v.DeadlineAt)
 	return err

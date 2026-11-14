@@ -1,0 +1,3 @@
+BEGIN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locale TEXT NOT NULL DEFAULT 'en' CHECK(locale IN ('en','sw'));
+COMMIT;

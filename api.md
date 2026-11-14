@@ -37,6 +37,12 @@ admin
 
 The backend uses one `users` identity table. “Client” in older names means a user with role `customer`; it is not a separate identity type.
 
+### Phone Number Format (E.164)
+Phone numbers must strictly match E.164 international format (`^\+[1-9]\d{1,14}$`), e.g. `+254712345678`.
+
+### Token Refresh & Replay Protection
+`POST /api/v1/auth/refresh` issues a new access token and invalidates the supplied refresh token. Single-use JTI replay protection is enforced in Redis (`jti:<claims.ID>`); replaying a previously used refresh token causes all active refresh sessions for that user to be revoked.
+
 ## Response Envelopes
 
 Most endpoints return:
@@ -75,6 +81,27 @@ Common status codes:
 Use RFC3339 UTC timestamps, for example `2026-09-12T23:59:59Z`.
 
 Frontend should treat IDs as opaque UUID/string values and should not derive identity from phone numbers. Phone numbers are contact fields only.
+
+## User follows (customer, technician, ISP)
+
+Following is social only: it does not hire a technician, add them to an ISP,
+or grant access to a job. Use the **users.id** UUID, which is `user_id` on
+technician search results, for `:id`.
+
+| Action | Method and path | Result in `data` |
+|---|---|---|
+| Follow | `POST /users/:id/follow` | `{ "user_id": "...", "is_following": true }` |
+| Unfollow | `DELETE /users/:id/follow` | `{ "user_id": "...", "is_following": false }` |
+| Counts/status | `GET /users/:id/follow-stats` or `/my/follow-stats` | `{ "follower_count": 0, "following_count": 0, "is_following": false, "user_id": "..." }` |
+| Followers | `GET /users/:id/followers` or `/my/followers` | `{ "items": [], "total": 0, "limit": 20, "offset": 0 }` |
+| Following | `GET /users/:id/following` or `/my/following` | Same paginated response |
+
+All require a customer, technician, or ISP JWT. `limit` is capped at 100;
+follower lists expose only public user fields. Follow is idempotent (201 new,
+200 already following), unfollow is idempotent (200), self-follow returns 400,
+and inactive/missing targets return 404. Company invitations through
+`POST /my/technicians` now create the company link so invited technicians
+appear in the ISP's `GET /my/technicians` list; independent technicians do not.
 
 # Part 1: Admin API
 
@@ -862,7 +889,9 @@ Mutation clients should send:
 Idempotency-Key: <unique-key-per-user-operation>
 ```
 
-The key must not be reused for a different request body. The backend has PostgreSQL idempotency storage; endpoint-by-endpoint replay wiring is still being completed.
+The key must not be reused for a different request body:
+- **Redis HTTP Replay Middleware**: Automatic idempotency caching is provided via `pkg/idempotency.Store.Middleware`. Successful (2xx) responses are stored in Redis with a 24-hour TTL and replayed verbatim with header `Idempotency-Replayed: true` when matching keys are received.
+- **PostgreSQL Idempotency Store**: Core state-changing transactions can use `pkg/idempotency.PostgresStore` (`Claim` and `Complete`) against the `idempotency_keys` table with SHA-256 request payload hashing (`HashRequest`).
 
 ## Rate limiting and request IDs
 
@@ -872,7 +901,22 @@ The backend may return:
 X-Request-ID: <request-id>
 ```
 
-Include this ID in bug reports and support requests. API traffic is rate-limited per client/IP through the configured middleware.
+Include this ID in bug reports and support requests. API traffic is rate-limited per client/IP through Redis fixed-window limiters:
+- **Auth endpoints (`/api/v1/auth/*`)**: 5 requests per minute.
+- **Standard API endpoints (`/api/v1/*`)**: 300 requests per minute.
+- **Per-phone OTP attempts**: Max 3 requests per 15-minute window (`otp_attempts:<phone>`).
+
+When rate limits are exceeded, the API responds with `429 Too Many Requests` and a `Retry-After: <seconds>` header.
+
+## Security Headers and CORS
+
+All responses include defense-in-depth HTTP headers:
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Content-Security-Policy: default-src 'self'`
+- `Strict-Transport-Security: max-age=86400; includeSubDomains; preload` (HSTS)
+- Dynamic CORS origins configured via `CORS_ALLOWED_ORIGINS` with preflight `OPTIONS` handling.
 
 ## Frontend implementation notes
 

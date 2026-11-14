@@ -17,6 +17,19 @@ type logRecorder struct {
 	bytes  int
 }
 
+// Flush preserves streaming through the request logger. Without it SSE
+// handlers see a writer that does not implement http.Flusher and return 500.
+func (w *logRecorder) Flush() {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *logRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *logRecorder) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
 func (w *logRecorder) Write(body []byte) (int, error) {
 	if w.status == 0 {

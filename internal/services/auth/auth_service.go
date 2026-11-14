@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +21,18 @@ import (
 	"github.com/lib/pq"
 )
 
+// e164PhoneRE validates E.164 international phone numbers (e.g. +254712345678).
+var e164PhoneRE = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+
+// ValidatePhone returns an error if the phone number is not a valid E.164 number.
+func ValidatePhone(phone string) error {
+	clean := strings.TrimSpace(phone)
+	if !e164PhoneRE.MatchString(clean) {
+		return errors.New("invalid phone number: must be in E.164 format (e.g. +254712345678)")
+	}
+	return nil
+}
+
 var (
 	ErrUserAlreadyExists  = errors.New("user already exists")
 	ErrPhoneNotRegistered = errors.New("phone not registered")
@@ -30,7 +43,16 @@ var (
 	ErrInvalidPassword    = errors.New("invalid credentials")
 	ErrAccountUnverified  = errors.New("account is not verified")
 	ErrTokenRevoked       = errors.New("token revoked")
+	ErrRateLimited        = errors.New("too many attempts, try again later")
+	ErrInvalidReferral    = errors.New("invalid referral code")
 )
+
+// MaxOTPAttemptsPerWindow is the maximum number of OTP requests per phone
+// within the OTP attempt window.
+const MaxOTPAttemptsPerWindow = 3
+
+// OTPAttemptWindow is the time window for OTP attempt rate limiting.
+const OTPAttemptWindow = 15 * time.Minute
 
 // AuthService handles authentication logic.
 type AuthService struct {
@@ -62,10 +84,19 @@ func NewAuthService(userRepo repository.UserRepository, cacheRepo repository.Cac
 		notifier:   notification.NewSenderFromEnv(),
 		secret:     []byte(secret),
 		issuer:     issuer,
-		accessTTL:  15 * time.Minute,
-		refreshTTL: 7 * 24 * time.Hour,
+		accessTTL:  authTTL("JWT_ACCESS_TTL", 15*time.Minute),
+		refreshTTL: authTTL("JWT_REFRESH_TTL", 7*24*time.Hour),
 		otpTTL:     5 * time.Minute,
 	}
+}
+
+func authTTL(key string, fallback time.Duration) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
 }
 
 // CreateUser registers a new user.
@@ -94,21 +125,28 @@ func (s *AuthService) CreateUser(req dto.RegisterRequest) (*models.User, error) 
 	}
 
 	now := time.Now().UTC()
+	referralCode, err := generateReferralCode()
+	if err != nil {
+		return nil, err
+	}
 	user := &models.User{
-		ID:           utils.GenerateID(),
-		Phone:        phone,
-		Username:     strings.TrimSpace(req.Username),
-		Name:         strings.TrimSpace(req.Name),
-		Email:        strings.TrimSpace(req.Email),
-		Role:         normalizeRole(req.Role),
-		PasswordHash: passwordHash,
-		IsVerified:   false,
-		Rating:       0,
-		TotalRatings: 0,
-		Status:       "active",
-		Joined:       now,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:             utils.GenerateID(),
+		Phone:          phone,
+		Username:       strings.TrimSpace(req.Username),
+		Name:           strings.TrimSpace(req.Name),
+		Email:          strings.TrimSpace(req.Email),
+		Role:           normalizeRole(req.Role),
+		PasswordHash:   passwordHash,
+		IsVerified:     false,
+		Rating:         0,
+		TotalRatings:   0,
+		Status:         "active",
+		Joined:         now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		ReferralCode:   referralCode,
+		ReferredByCode: strings.ToUpper(strings.TrimSpace(req.ReferralCode)),
+		Locale:         normalizeLocale(req.Locale),
 	}
 
 	if err := s.userRepo.CreateUser(user); err != nil {
@@ -117,6 +155,9 @@ func (s *AuthService) CreateUser(req dto.RegisterRequest) (*models.User, error) 
 		var pgErr *pq.Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, ErrUserAlreadyExists
+		}
+		if errors.Is(err, sql.ErrNoRows) && user.ReferredByCode != "" {
+			return nil, ErrInvalidReferral
 		}
 		return nil, err
 	}
@@ -130,6 +171,9 @@ func (s *AuthService) CreateUser(req dto.RegisterRequest) (*models.User, error) 
 func (s *AuthService) AuthenticateWithPassword(phone, password string) (*models.User, error) {
 	user, err := s.userRepo.GetUserByPhone(strings.TrimSpace(phone))
 	if err != nil {
+		return nil, ErrInvalidPassword
+	}
+	if user.Status != "active" {
 		return nil, ErrInvalidPassword
 	}
 
@@ -150,6 +194,9 @@ func (s *AuthService) AuthenticateWithPassword(phone, password string) (*models.
 func (s *AuthService) AuthenticateWithUsername(username, password string) (*models.User, error) {
 	user, err := s.userRepo.GetUserByUsername(strings.TrimSpace(username))
 	if err != nil {
+		return nil, ErrInvalidPassword
+	}
+	if user.Status != "active" {
 		return nil, ErrInvalidPassword
 	}
 	if user.Role == "customer" {
@@ -181,6 +228,16 @@ func (s *AuthService) IssueOTP(userID string) (string, int, error) {
 	if err != nil {
 		return "", 0, ErrUserNotFound
 	}
+	if user.Status != "active" {
+		return "", 0, ErrUserNotFound
+	}
+
+	// Per-phone rate limiting to prevent SMS flooding and abuse.
+	count, allowed := s.cacheRepo.IncrementOTPAttempts(user.Phone, MaxOTPAttemptsPerWindow, OTPAttemptWindow)
+	if !allowed {
+		return "", 0, fmt.Errorf("%w (attempt %d/%d in %v window)", ErrRateLimited, count, MaxOTPAttemptsPerWindow, OTPAttemptWindow)
+	}
+
 	code, err := generateOTP()
 	if err != nil {
 		return "", 0, err
@@ -211,6 +268,9 @@ func (s *AuthService) RequestLoginOTP(phone string) (*models.User, int, error) {
 	if err != nil {
 		return nil, 0, ErrPhoneNotRegistered
 	}
+	if user.Status != "active" {
+		return nil, 0, ErrPhoneNotRegistered
+	}
 	if !user.IsVerified {
 		return nil, 0, ErrAccountUnverified
 	}
@@ -232,6 +292,9 @@ func (s *AuthService) VerifyOTP(userID, otp string) (*models.User, error) {
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
+	if user.Status != "active" {
+		return nil, ErrUserNotFound
+	}
 
 	storedOTP, err := s.cacheRepo.GetOTP(userID)
 	if err != nil {
@@ -243,14 +306,44 @@ func (s *AuthService) VerifyOTP(userID, otp string) (*models.User, error) {
 	}
 
 	_ = s.cacheRepo.DeleteOTP(userID)
+	// Reset OTP attempt counter after successful verification.
+	s.cacheRepo.ResetOTPAttempts(user.Phone)
 
 	user.IsVerified = true
 	user.UpdatedAt = time.Now().UTC()
 	if err := s.userRepo.UpdateUser(user); err != nil {
 		return nil, err
 	}
+	if qualifier, ok := s.userRepo.(interface {
+		QualifyReferral(string, float64) error
+	}); ok {
+		if err := qualifier.QualifyReferral(user.ID, 250); err != nil {
+			return nil, err
+		}
+	}
+	if refreshed, err := s.userRepo.GetUserByID(user.ID); err == nil {
+		user = refreshed
+	}
 
 	return user, nil
+}
+
+func generateReferralCode() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i := range buf {
+		buf[i] = alphabet[int(buf[i])%len(alphabet)]
+	}
+	return "ISP" + string(buf), nil
+}
+func normalizeLocale(value string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "sw") {
+		return "sw"
+	}
+	return "en"
 }
 
 // GenerateAccessToken returns a signed access token.
@@ -275,6 +368,9 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 }
 
 // RefreshAccessToken swaps a valid refresh token for a new access token.
+// The old refresh token is revoked (rotated) to prevent replay attacks:
+// if a refresh token is stolen and used, the attacker and the legitimate
+// user will both be invalidated on the next use.
 func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, error) {
 	claims, err := s.parseToken(refreshToken)
 	if err != nil {
@@ -284,6 +380,16 @@ func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, erro
 	if claims.TokenUse != "refresh" {
 		return "", 0, ErrInvalidToken
 	}
+
+	// JTI replay protection: a refresh token must only be used once.
+	jtiKey := "jti:" + claims.ID
+	used, err := s.cacheRepo.Get(jtiKey)
+	if err == nil && used != "" {
+		// Token already used — possible theft. Revoke all sessions for this user.
+		_ = s.userRepo.RevokeAllRefreshSessions(claims.UserID)
+		return "", 0, ErrInvalidToken
+	}
+
 	active, err := s.userRepo.RefreshSessionActive(claims.ID, tokenHash(refreshToken))
 	if err != nil || !active {
 		return "", 0, ErrInvalidToken
@@ -293,6 +399,19 @@ func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, erro
 	if err != nil {
 		return "", 0, err
 	}
+	if user.Status != "active" {
+		return "", 0, ErrInvalidToken
+	}
+
+	// Mark this JTI as used (prevents replay) with a TTL equal to the token's
+	// remaining lifetime.
+	ttl := time.Until(time.Unix(claims.Expires, 0))
+	if ttl > 0 {
+		_ = s.cacheRepo.Set(jtiKey, "1", ttl)
+	}
+
+	// Revoke the old refresh token (rotation).
+	_ = s.cacheRepo.SetRevokedToken(refreshToken, ttl)
 
 	return s.GenerateAccessToken(user)
 }
@@ -381,6 +500,11 @@ func (s *AuthService) parseToken(raw string) (*utils.TokenClaims, error) {
 
 	claims, err := utils.ParseToken(s.secret, tokenString)
 	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	// Reject tokens minted for a different issuer (e.g. another service that
+	// shares the same signing secret).
+	if s.issuer != "" && claims.Issuer != s.issuer {
 		return nil, ErrInvalidToken
 	}
 

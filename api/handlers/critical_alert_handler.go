@@ -11,8 +11,12 @@ import (
 
 type CriticalAlertHandler struct{ service *notifications.Service }
 
-func NewCriticalAlertHandler() *CriticalAlertHandler {
-	return &CriticalAlertHandler{service: notifications.NewService(postgres.NewNotificationRepositoryAdapter(), notificationsSender())}
+func NewCriticalAlertHandler() (*CriticalAlertHandler, error) {
+	repository, err := postgres.NewNotificationRepositoryAdapter()
+	if err != nil {
+		return nil, err
+	}
+	return &CriticalAlertHandler{service: notifications.NewService(repository, notificationsSender())}, nil
 }
 
 func notificationsSender() notification.Sender { return notification.NewSenderFromEnv() }
@@ -31,5 +35,5 @@ func (h *CriticalAlertHandler) Send(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondWithJSON(w, http.StatusAccepted,  dto.APIResponse{Success: true, Message: "critical alert sent"})
+	respondWithJSON(w, http.StatusAccepted, dto.APIResponse{Success: true, Message: "critical alert sent"})
 }

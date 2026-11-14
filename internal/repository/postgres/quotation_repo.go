@@ -12,8 +12,16 @@ import (
 
 type quotationRepository struct{ dbReader, dbWriter *sql.DB }
 
-func NewQuotationRepository() *quotationRepository {
-	return &quotationRepository{dbReader: database.GetReader(), dbWriter: database.GetWriter()}
+func NewQuotationRepository() (*quotationRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &quotationRepository{dbReader: reader, dbWriter: writer}, nil
 }
 
 func (r *quotationRepository) NextQuotationNumber(at time.Time) (string, error) {

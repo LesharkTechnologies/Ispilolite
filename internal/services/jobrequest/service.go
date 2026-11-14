@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"ispilolite/internal/models"
@@ -21,6 +22,32 @@ type ProviderMatcher interface {
 var defaultMatcher ProviderMatcher
 
 func SetMatcher(matcher ProviderMatcher) { defaultMatcher = matcher }
+
+// EventPublisher receives committed job transitions. Implementations must be
+// best-effort: notification failures cannot roll back a successful job write.
+type EventPublisher interface {
+	PublishJobEvent(context.Context, *models.JobRequest, string, string)
+}
+
+var (
+	eventPublisherMu sync.RWMutex
+	eventPublisher   EventPublisher
+)
+
+func SetEventPublisher(publisher EventPublisher) {
+	eventPublisherMu.Lock()
+	eventPublisher = publisher
+	eventPublisherMu.Unlock()
+}
+
+func publishEvent(job *models.JobRequest, eventType, actorID string) {
+	eventPublisherMu.RLock()
+	publisher := eventPublisher
+	eventPublisherMu.RUnlock()
+	if publisher != nil && job != nil {
+		publisher.PublishJobEvent(context.Background(), job, eventType, actorID)
+	}
+}
 
 var (
 	ErrNotFound       = errors.New("job request not found")
@@ -67,6 +94,7 @@ func (s *Service) Create(customerID string, job *models.JobRequest) (*models.Job
 	if job.Mode == "broadcast" && defaultMatcher != nil {
 		_, _ = defaultMatcher.MatchProviders(context.Background(), job.ID, matching.MatchOptions{RadiusKM: 10, AvailabilityRequired: true})
 	}
+	publishEvent(job, "job_status", customerID)
 	return job, nil
 }
 func (s *Service) ListForCustomer(id, status string) ([]*models.JobRequest, error) {
@@ -95,7 +123,11 @@ func (s *Service) AssignTechnician(ispID, requestID, technicianID string) (*mode
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return repo.AssignTechnician(requestID, ispID, technicianID)
+	job, err := repo.AssignTechnician(requestID, ispID, technicianID)
+	if err == nil {
+		publishEvent(job, "job_status", ispID)
+	}
+	return job, err
 }
 
 func (s *Service) Terminate(requestID, actorID, reason string, endedAt time.Time) error {
@@ -105,7 +137,14 @@ func (s *Service) Terminate(requestID, actorID, reason string, endedAt time.Time
 	if !ok {
 		return ErrNotFound
 	}
-	return repo.TerminateJob(requestID, actorID, reason, endedAt)
+	if err := repo.TerminateJob(requestID, actorID, reason, endedAt); err != nil {
+		return err
+	}
+	job, err := s.repo.GetJobRequestByID(requestID)
+	if err == nil {
+		publishEvent(job, "job_status", actorID)
+	}
+	return err
 }
 func (s *Service) Applications(customerID, requestID string) ([]*models.JobApplication, error) {
 	return s.repo.ListApplications(requestID, customerID)
@@ -118,25 +157,54 @@ func (s *Service) Assign(customerID, requestID, applicationID string) (*models.J
 	}
 	monitoring.BusinessEvents.WithLabelValues("job.assigned", "success").Inc()
 	queue.PublishBestEffort(queue.JobExchange, "job.assigned", queue.Event{Type: "job.assigned", AggregateID: requestID, Data: map[string]interface{}{"application_id": applicationID, "technician_id": job.AssignedTechnicianID, "isp_id": job.AssignedISPID}})
+	publishEvent(job, "job_status", customerID)
 	return job, nil
 }
 func (s *Service) Availability(customerID, requestID string, available bool) error {
-	return s.repo.SetAvailability(requestID, customerID, available)
+	if err := s.repo.SetAvailability(requestID, customerID, available); err != nil {
+		return err
+	}
+	job, err := s.repo.GetJobRequestByID(requestID)
+	if err == nil {
+		publishEvent(job, "job_status", customerID)
+	}
+	return err
 }
 func (s *Service) Delete(customerID, requestID string) error {
 	return s.repo.DeleteJobRequest(requestID, customerID)
 }
 func (s *Service) RespondAsTechnician(techID, requestID, status string) (*models.JobRequest, error) {
-	if status != "accepted" && status != "rejected" && status != "completed" {
+	return s.RespondWithWarranty(techID, requestID, status, 0)
+}
+
+func (s *Service) RespondWithWarranty(techID, requestID, status string, warrantyDays int) (*models.JobRequest, error) {
+	if status != "accepted" && status != "rejected" && status != "in_progress" && status != "completed" {
 		return nil, ErrInvalidStatus
+	}
+	if warrantyDays < 0 || warrantyDays > 3650 || (status != "completed" && warrantyDays != 0) {
+		return nil, ErrInvalidRequest
 	}
 	if err := s.repo.UpdateJobStatus(requestID, techID, status); err != nil {
 		return nil, err
+	}
+	if status == "completed" {
+		if warrantyDays > 0 {
+			repo, ok := s.repo.(interface {
+				ActivateWarranty(string, string, int) error
+			})
+			if !ok {
+				return nil, ErrInvalidRequest
+			}
+			if err := repo.ActivateWarranty(requestID, techID, warrantyDays); err != nil {
+				return nil, err
+			}
+		}
 	}
 	job, err := s.repo.GetJobRequestByID(requestID)
 	if err == nil {
 		monitoring.BusinessEvents.WithLabelValues("job."+status, "success").Inc()
 		queue.PublishBestEffort(queue.JobExchange, "job."+status, queue.Event{Type: "job." + status, AggregateID: requestID, Data: map[string]interface{}{"actor_id": techID}})
+		publishEvent(job, "job_status", techID)
 	}
 	return job, err
 }

@@ -2,22 +2,37 @@ package postgres
 
 import (
 	"database/sql"
+	"encoding/json"
 	"ispilolite/internal/models"
 	"ispilolite/pkg/database"
 )
 
 type reviewRepo struct{ reader, writer *sql.DB }
 
-func NewReviewRepo() *reviewRepo { return &reviewRepo{database.GetReader(), database.GetWriter()} }
+func NewReviewRepo() (*reviewRepo, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &reviewRepo{reader, writer}, nil
+}
 func (r *reviewRepo) CreateReview(v *models.Review) error {
 	if v.Status == "" {
 		v.Status = "pending"
 	}
-	_, err := r.writer.Exec(`INSERT INTO reviews (id,target_id,target_type,user_id,company_id,engagement_id,rating,comment,status,created_at,updated_at) VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10,$10)`, v.ID, v.TargetID, v.TargetType, v.UserID, v.CompanyID, v.EngagementID, v.Rating, v.Comment, v.Status, v.CreatedAt)
+	photos, err := json.Marshal(v.PhotoURLs)
+	if err != nil {
+		return err
+	}
+	_, err = r.writer.Exec(`INSERT INTO reviews (id,target_id,target_type,user_id,company_id,engagement_id,request_id,rating,comment,status,photo_urls,is_verified,created_at,updated_at) VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,$11,$12,$13,$13)`, v.ID, v.TargetID, v.TargetType, v.UserID, v.CompanyID, v.EngagementID, v.JobRequestID, v.Rating, v.Comment, v.Status, photos, v.IsVerified, v.CreatedAt)
 	return err
 }
 func (r *reviewRepo) GetReviewsByTarget(id, kind string) ([]*models.Review, error) {
-	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),rating,comment,status,moderation_note,created_at,updated_at FROM reviews WHERE target_id=$1 AND target_type=$2 AND status='approved' ORDER BY created_at DESC`, id, kind)
+	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at FROM reviews WHERE target_id=$1 AND target_type=$2 AND status='approved' ORDER BY created_at DESC`, id, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +48,7 @@ func (r *reviewRepo) ReportReview(v *models.ReviewReport) error {
 	return err
 }
 func (r *reviewRepo) ListPendingReviews(limit int) ([]*models.Review, error) {
-	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),rating,comment,status,moderation_note,created_at,updated_at FROM reviews WHERE status='pending' OR EXISTS(SELECT 1 FROM review_reports rr WHERE rr.review_id=reviews.id AND rr.status='open') ORDER BY created_at LIMIT $1`, limit)
+	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at FROM reviews WHERE status='pending' OR EXISTS(SELECT 1 FROM review_reports rr WHERE rr.review_id=reviews.id AND rr.status='open') ORDER BY created_at LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +83,20 @@ func scanReviews(rows *sql.Rows) ([]*models.Review, error) {
 	out := []*models.Review{}
 	for rows.Next() {
 		v := &models.Review{}
-		if err := rows.Scan(&v.ID, &v.TargetID, &v.TargetType, &v.UserID, &v.Rating, &v.Comment, &v.Status, &v.ModerationNote, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		var photos []byte
+		if err := rows.Scan(&v.ID, &v.TargetID, &v.TargetType, &v.UserID, &v.JobRequestID, &v.Rating, &v.Comment, &v.Status, &v.ModerationNote, &photos, &v.IsVerified, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(photos, &v.PhotoURLs)
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (r *reviewRepo) VerifyCompletedJob(jobID, customerID, targetID, targetType string) (bool, error) {
+	var ok bool
+	err := r.reader.QueryRow(`SELECT EXISTS(SELECT 1 FROM service_requests WHERE id=$1 AND customer_id=$2
+		AND status='completed' AND (($4='technician' AND (target_technician_id=$3 OR assigned_technician_id=$3))
+		OR ($4='isp' AND (target_isp_id=$3 OR assigned_isp_id=$3))))`, jobID, customerID, targetID, targetType).Scan(&ok)
+	return ok, err
 }

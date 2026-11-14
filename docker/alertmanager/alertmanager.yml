@@ -1,0 +1,50 @@
+# Alertmanager configuration for Ispilolite.
+#
+# The default receiver intentionally has no integrations: alerts are visible in
+# the Alertmanager UI (http://127.0.0.1:9093) but are not delivered anywhere
+# until you add one. Uncomment and configure at least one of the examples
+# below before relying on paging.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: default
+      repeat_interval: 1h
+
+inhibit_rules:
+  # A dead API makes every scrape-derived API/database alert noisy.
+  - source_matchers:
+      - alertname="IspiloliteAPIDown"
+    target_matchers:
+      - alertname=~"Ispilolite(Postgres|DB|High|Latency|Auth).*"
+    equal: []
+
+receivers:
+  - name: default
+    # Slack:
+    # slack_configs:
+    #   - api_url: "https://hooks.slack.com/services/REPLACE/ME"
+    #     channel: "#ispilolite-alerts"
+    #     send_resolved: true
+    #
+    # Generic webhook (PagerDuty proxy, SMS gateway, etc.):
+    # webhook_configs:
+    #   - url: "https://alerts.example.com/ispilolite"
+    #     send_resolved: true
+    #
+    # Email:
+    # email_configs:
+    #   - to: "ops@ispilo.co.ke"
+    #     from: "alertmanager@ispilo.co.ke"
+    #     smarthost: "smtp.example.com:587"
+    #     auth_username: "alertmanager@ispilo.co.ke"
+    #     auth_password_file: "/etc/alertmanager/smtp-password"

@@ -23,10 +23,29 @@ type ClientHandler struct {
 	packages      *isp.ISPService
 }
 
-func NewClientHandler() *ClientHandler {
-	repo := postgres.NewUserRepo()
-	jobRepo := redisrepo.NewCachedJobRepository(postgres.NewJobRequestRepo(), database.GetRedis())
-	return &ClientHandler{jobs: jobrequest.NewService(jobRepo), users: user.NewUserService(repo), installations: installation.NewInstallationService(postgres.NewInstallationRepo()), packages: isp.NewISPService(postgres.NewISPRepo())}
+func NewClientHandler() (*ClientHandler, error) {
+	repo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
+	}
+	jobRepo, err := postgres.NewJobRequestRepo()
+	if err != nil {
+		return nil, err
+	}
+	installationRepo, err := postgres.NewInstallationRepo()
+	if err != nil {
+		return nil, err
+	}
+	ispRepo, err := postgres.NewISPRepo()
+	if err != nil {
+		return nil, err
+	}
+	redisClient, err := database.MustRedis()
+	if err != nil {
+		return nil, err
+	}
+	cachedJobs := redisrepo.NewCachedJobRepository(jobRepo, redisClient)
+	return &ClientHandler{jobs: jobrequest.NewService(cachedJobs), users: user.NewUserService(repo), installations: installation.NewInstallationService(installationRepo), packages: isp.NewISPService(ispRepo)}, nil
 }
 
 func (h *ClientHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +75,9 @@ func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Location != nil {
 		u.Location = &models.Coordinates{Lat: req.Location.Lat, Lng: req.Location.Lng}
+	}
+	if strings.EqualFold(req.Locale, "en") || strings.EqualFold(req.Locale, "sw") {
+		u.Locale = strings.ToLower(req.Locale)
 	}
 	if err := h.users.UpdateUser(u); err != nil {
 		respondWithError(w, 500, "failed to update profile")
@@ -262,4 +284,18 @@ func (h *ClientHandler) UpdateSubscription(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "subscription updated"})
+}
+
+func (h *ClientHandler) SetSubscriptionAutoRenew(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/subscriptions/")
+	var req dto.PackageAutoRenewRequest
+	if id == "" || decodeJSON(w, r, &req) != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, "invalid auto-renew request")
+		return
+	}
+	if err := h.packages.SetAutoRenew(id, userIDFromContext(r.Context()), req.AutoRenew); err != nil {
+		respondWithErrorRaw(w, http.StatusNotFound, "subscription not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "auto-renew preference updated"})
 }

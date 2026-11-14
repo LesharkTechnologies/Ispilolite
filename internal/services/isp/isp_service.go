@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
+	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
 	"strings"
 	"time"
 )
@@ -35,7 +37,16 @@ func (s *ISPService) GetISPPackages(ispID string) ([]*models.ISPPackage, error) 
 	return s.ispRepo.GetISPPackages(ispID)
 }
 
-func (s *ISPService) UpdateISP(isp *models.ISP) error { return s.ispRepo.UpdateISP(isp) }
+func (s *ISPService) UpdateISP(isp *models.ISP) error {
+	if strings.TrimSpace(isp.LogoURL) != "" {
+		urls, err := validation.CloudinaryURLs([]string{isp.LogoURL}, 1)
+		if err != nil {
+			return err
+		}
+		isp.LogoURL = urls[0]
+	}
+	return s.ispRepo.UpdateISP(isp)
+}
 func (s *ISPService) CreatePackage(pkg *models.ISPPackage) error {
 	if err := validatePackage(pkg); err != nil {
 		return err
@@ -105,11 +116,25 @@ func (s *ISPService) ListSubscriptions(id, role, status string, limit int) ([]*m
 	}
 	return s.ispRepo.ListPackageSubscriptions(id, role, strings.ToLower(strings.TrimSpace(status)), limit)
 }
+func (s *ISPService) SetAutoRenew(subscriptionID, customerID string, enabled bool) error {
+	return s.ispRepo.SetPackageAutoRenew(subscriptionID, customerID, enabled)
+}
+func (s *ISPService) RecordUsage(subscriptionID, ispID, externalRef string, value float64, measuredAt time.Time) (*models.PackageSubscription, error) {
+	if strings.TrimSpace(subscriptionID) == "" || strings.TrimSpace(externalRef) == "" || value <= 0 {
+		return nil, fmt.Errorf("subscription_id, positive usage_value, and external_ref are required")
+	}
+	if measuredAt.IsZero() {
+		measuredAt = time.Now().UTC()
+	}
+	return s.ispRepo.RecordPackageUsage(&models.PackageUsageEvent{ID: utils.GenerateID(), SubscriptionID: subscriptionID,
+		ISPID: ispID, UsageValue: value, ExternalRef: strings.TrimSpace(externalRef), MeasuredAt: measuredAt})
+}
 func validatePackage(pkg *models.ISPPackage) error {
 	pkg.Name = strings.TrimSpace(pkg.Name)
 	pkg.Category = strings.ToLower(strings.TrimSpace(pkg.Category))
 	pkg.BillingCycle = strings.ToLower(strings.TrimSpace(pkg.BillingCycle))
 	pkg.CapacityType = strings.ToLower(strings.TrimSpace(pkg.CapacityType))
+	pkg.Tier = strings.ToLower(strings.TrimSpace(pkg.Tier))
 	if pkg.Name == "" || pkg.SpeedValue <= 0 || pkg.SpeedUnitID == "" || pkg.BasePrice < 0 {
 		return fmt.Errorf("name, positive speed, speed unit, and non-negative price are required")
 	}
@@ -118,6 +143,18 @@ func validatePackage(pkg *models.ISPPackage) error {
 	}
 	if pkg.BillingCycle == "" {
 		pkg.BillingCycle = "monthly"
+	}
+	if pkg.BillingCycle != "weekly" && pkg.BillingCycle != "monthly" && pkg.BillingCycle != "yearly" {
+		return fmt.Errorf("billing_cycle must be weekly, monthly, or yearly")
+	}
+	if pkg.Tier == "" {
+		pkg.Tier = "basic"
+	}
+	if pkg.Tier != "basic" && pkg.Tier != "pro" && pkg.Tier != "enterprise" && pkg.Tier != "custom" {
+		return fmt.Errorf("tier must be basic, pro, enterprise, or custom")
+	}
+	if pkg.OveragePrice < 0 {
+		return fmt.Errorf("overage_price cannot be negative")
 	}
 	if pkg.CapacityType == "" {
 		pkg.CapacityType = "unlimited"

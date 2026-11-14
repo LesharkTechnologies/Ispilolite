@@ -8,4 +8,6 @@ type VacancyRequest struct {
 	DeadlineAt  string `json:"deadline_at,omitempty"`
 }
 
-type VacancyApplicationRequest struct { Message string `json:"message"` }
+type VacancyApplicationRequest struct {
+	Message string `json:"message"`
+}

@@ -11,8 +11,16 @@ import (
 
 type technicianRepo struct{ reader, writer *sql.DB }
 
-func NewTechnicianRepository() *technicianRepo {
-	return &technicianRepo{database.GetReader(), database.GetWriter()}
+func NewTechnicianRepository() (*technicianRepo, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &technicianRepo{reader, writer}, nil
 }
 func (r *technicianRepo) UpsertProfile(p *models.TechnicianProfile) error {
 	tx, err := r.writer.Begin()

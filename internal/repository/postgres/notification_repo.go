@@ -14,12 +14,24 @@ type notificationRepository struct{ dbReader, dbWriter *sql.DB }
 
 type NotificationRepositoryAdapter struct{ *notificationRepository }
 
-func NewNotificationRepository() *notificationRepository {
-	return &notificationRepository{dbReader: database.GetReader(), dbWriter: database.GetWriter()}
+func NewNotificationRepository() (*notificationRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &notificationRepository{dbReader: reader, dbWriter: writer}, nil
 }
 
-func NewNotificationRepositoryAdapter() *NotificationRepositoryAdapter {
-	return &NotificationRepositoryAdapter{NewNotificationRepository()}
+func NewNotificationRepositoryAdapter() (*NotificationRepositoryAdapter, error) {
+	repo, err := NewNotificationRepository()
+	if err != nil {
+		return nil, err
+	}
+	return &NotificationRepositoryAdapter{repo}, nil
 }
 
 func (r *notificationRepository) CreateNotification(notification *models.Notification) error {

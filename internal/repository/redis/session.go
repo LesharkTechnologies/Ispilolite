@@ -17,8 +17,12 @@ type Session struct {
 }
 type SessionRepository struct{ client *goredis.Client }
 
-func NewSessionRepository() *SessionRepository {
-	return &SessionRepository{client: database.GetRedis()}
+func NewSessionRepository() (*SessionRepository, error) {
+	client, err := database.MustRedis()
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRepository{client: client}, nil
 }
 func (r *SessionRepository) Set(ctx context.Context, id string, session Session, ttl time.Duration) error {
 	body, err := json.Marshal(session)

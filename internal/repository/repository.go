@@ -40,6 +40,8 @@ type ISPRepository interface {
 	CreatePackageSubscription(reservationID, customerID string) (*models.PackageSubscription, error)
 	UpdatePackageSubscription(subscriptionID, actorID, status string, endsAt *time.Time) error
 	ListPackageSubscriptions(userID, role, status string, limit int) ([]*models.PackageSubscription, error)
+	SetPackageAutoRenew(subscriptionID, customerID string, enabled bool) error
+	RecordPackageUsage(event *models.PackageUsageEvent) (*models.PackageSubscription, error)
 }
 
 type ReviewRepository interface {
@@ -49,6 +51,7 @@ type ReviewRepository interface {
 	ReportReview(report *models.ReviewReport) error
 	ModerateReview(reviewID, adminID, status, note string) error
 	ListPendingReviews(limit int) ([]*models.Review, error)
+	VerifyCompletedJob(jobID, customerID, targetID, targetType string) (bool, error)
 }
 
 // type FlagRepository interface {
@@ -166,4 +169,6 @@ type CacheRepository interface {
 	Get(key string) (string, error)
 	SetRevokedToken(token string, expiration time.Duration) error
 	IsTokenRevoked(token string) bool
+	IncrementOTPAttempts(phone string, limit int, window time.Duration) (int, bool)
+	ResetOTPAttempts(phone string)
 }

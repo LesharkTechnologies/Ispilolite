@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -32,6 +33,10 @@ func main() {
 	webhook := os.Getenv("NOTIFICATION_WEBHOOK_URL")
 	if webhook == "" {
 		log.Fatal("NOTIFICATION_WEBHOOK_URL is required")
+	}
+	parsed, err := url.Parse(webhook)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path == "/api/v1/notifications/webhook" {
+		log.Fatal("NOTIFICATION_WEBHOOK_URL must be an HTTPS delivery provider, not the API's nonexistent /api/v1/notifications/webhook route")
 	}
 	service, err := queue.New(queue.Config{URL: rabbitURL, ConsumerName: getenv("RABBITMQ_CONSUMER_NAME", "notification-worker")})
 	if err != nil {

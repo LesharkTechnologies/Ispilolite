@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"ispilolite/internal/services/matching"
@@ -12,8 +13,12 @@ import (
 
 type MatchingRepository struct{ db *sql.DB }
 
-func NewMatchingRepository() *MatchingRepository {
-	return &MatchingRepository{db: database.GetWriter()}
+func NewMatchingRepository() (*MatchingRepository, error) {
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &MatchingRepository{db: writer}, nil
 }
 
 func (r *MatchingRepository) CreateRequest(ctx context.Context, req *matching.Request) error {
@@ -31,8 +36,43 @@ func (r *MatchingRepository) GetRequest(ctx context.Context, id string) (*matchi
 	return request, err
 }
 
-func (r *MatchingRepository) ListRequests(context.Context, string, int, int) ([]*matching.Request, int, error) {
-	return nil, 0, fmt.Errorf("matching request listing is not implemented")
+func (r *MatchingRepository) ListRequests(ctx context.Context, status string, limit, offset int) ([]*matching.Request, int, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	status = strings.TrimSpace(status)
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM service_requests WHERE deleted_at IS NULL AND ($1::text = '' OR status = $1::text)`, status).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.db.QueryContext(ctx, `SELECT id,customer_id,COALESCE(location_id::text,''),service_type,description,status,budget,preferred_date,created_at,updated_at FROM service_requests WHERE deleted_at IS NULL AND ($1::text = '' OR status = $1::text) ORDER BY created_at DESC LIMIT $2 OFFSET $3`, status, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]*matching.Request, 0, limit)
+	for rows.Next() {
+		request := &matching.Request{}
+		var preferred sql.NullTime
+		if err := rows.Scan(&request.ID, &request.CustomerID, &request.LocationID, &request.ServiceType, &request.Description, &request.Status, &request.Budget, &preferred, &request.CreatedAt, &request.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		if preferred.Valid {
+			value := preferred.Time
+			request.PreferredDate = &value
+		}
+		out = append(out, request)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
 }
 
 func (r *MatchingRepository) FindMatches(ctx context.Context, req *matching.Request, opts matching.MatchOptions) ([]matching.Match, error) {

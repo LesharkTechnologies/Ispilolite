@@ -52,6 +52,8 @@ type ISPPackage struct {
 	ArchivedAt             *time.Time `json:"archived_at,omitempty" db:"archived_at"`
 	MaxSubscriptions       int        `json:"max_subscriptions,omitempty" db:"max_subscriptions"`
 	AvailableSubscriptions int        `json:"available_subscriptions,omitempty" db:"available_subscriptions"`
+	Tier                   string     `json:"tier" db:"tier"`
+	OveragePrice           float64    `json:"overage_price" db:"overage_price"`
 }
 
 type PackageUnit struct {
@@ -73,20 +75,38 @@ type PackageFilter struct {
 	Limit     int
 }
 type PackageSubscription struct {
-	ID               string     `json:"id"`
-	PackageID        string     `json:"package_id"`
-	PackageVersionID string     `json:"package_version_id"`
-	CustomerID       string     `json:"customer_id"`
-	ISPID            string     `json:"isp_id"`
-	Status           string     `json:"status"`
-	Price            float64    `json:"price"`
-	County           string     `json:"county"`
-	PackageName      string     `json:"package_name"`
-	SpeedValue       float64    `json:"speed_value"`
-	SpeedUnit        string     `json:"speed_unit"`
-	Category         string     `json:"category"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	EndsAt           *time.Time `json:"ends_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                 string     `json:"id"`
+	PackageID          string     `json:"package_id"`
+	PackageVersionID   string     `json:"package_version_id"`
+	CustomerID         string     `json:"customer_id"`
+	ISPID              string     `json:"isp_id"`
+	Status             string     `json:"status"`
+	Price              float64    `json:"price"`
+	County             string     `json:"county"`
+	PackageName        string     `json:"package_name"`
+	SpeedValue         float64    `json:"speed_value"`
+	SpeedUnit          string     `json:"speed_unit"`
+	Category           string     `json:"category"`
+	Tier               string     `json:"tier"`
+	BillingCycle       string     `json:"billing_cycle"`
+	AutoRenew          bool       `json:"auto_renew"`
+	IncludedUsage      float64    `json:"included_usage"`
+	UsageValue         float64    `json:"usage_value"`
+	OveragePrice       float64    `json:"overage_price"`
+	OverageAmount      float64    `json:"overage_amount"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	EndsAt             *time.Time `json:"ends_at,omitempty"`
+	CurrentPeriodStart *time.Time `json:"current_period_start,omitempty"`
+	CurrentPeriodEnd   *time.Time `json:"current_period_end,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type PackageUsageEvent struct {
+	ID             string    `json:"id"`
+	SubscriptionID string    `json:"subscription_id"`
+	ISPID          string    `json:"isp_id"`
+	UsageValue     float64   `json:"usage_value"`
+	ExternalRef    string    `json:"external_ref"`
+	MeasuredAt     time.Time `json:"measured_at"`
 }

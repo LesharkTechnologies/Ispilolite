@@ -10,7 +10,16 @@ import (
 	"time"
 )
 
-type Store struct{ DB *sql.DB }
+// PostgresStore implements database-backed idempotency tracking in PostgreSQL.
+type PostgresStore struct{ DB *sql.DB }
+
+// SQLStore is an alias for PostgresStore.
+type SQLStore = PostgresStore
+
+// NewPostgresStore creates a new PostgresStore.
+func NewPostgresStore(db *sql.DB) *PostgresStore {
+	return &PostgresStore{DB: db}
+}
 
 type Result struct {
 	Claimed    bool
@@ -23,7 +32,7 @@ func HashRequest(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Store) Claim(userID, scope, key, requestHash string) (Result, error) {
+func (s *PostgresStore) Claim(userID, scope, key, requestHash string) (Result, error) {
 	if s == nil || s.DB == nil {
 		return Result{}, fmt.Errorf("idempotency store is not configured")
 	}
@@ -49,7 +58,7 @@ func (s *Store) Claim(userID, scope, key, requestHash string) (Result, error) {
 	return Result{Claimed: false, StatusCode: int(status.Int64), Response: response}, nil
 }
 
-func (s *Store) Complete(userID, scope, key string, statusCode int, response any) error {
+func (s *PostgresStore) Complete(userID, scope, key string, statusCode int, response any) error {
 	body, err := json.Marshal(response)
 	if err != nil {
 		return err

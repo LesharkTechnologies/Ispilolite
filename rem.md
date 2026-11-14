@@ -10,7 +10,9 @@ This file tracks the implementation against the modular-monolith and matching/ge
 | Configuration and environment validation | Partial | Database, Redis, JWT, RabbitMQ, telemetry, SMS, and audit settings are read by their respective packages. A single typed config object is not yet used everywhere. |
 | PostgreSQL and Redis startup checks | Implemented in auth entrypoint | `pkg/database` initializes and pings both pools and Redis. |
 | Repository/service dependency graph | Partial | Existing handlers construct repositories locally; full constructor injection is not yet complete. |
-| Middleware stack | Implemented | Request ID, request logging, rate limiting, JWT auth, recovery, Prometheus, and tracing are present. |
+| Middleware stack | Implemented | Request ID, request logging, tiered Redis rate limiting (5/min auth, 300/min API), JWT auth, recovery, Prometheus, tracing, security headers (nosniff, DENY, CSP), HSTS, and dynamic CORS are present with a `stdMiddleware` adapter for Gin. |
+| Idempotency & replay | Partial | Redis-backed, per-user guarded replay is wired to `POST /my/jobs` and `POST /quotations` when `Idempotency-Key` is supplied. Escrow payment creation has its own database-backed idempotency key. Other writes do not yet use guarded replay; the legacy `pkg/idempotency.Middleware` is not wired. |
+| Auth hardening & replay defense | Implemented | E.164 phone number validation, per-phone OTP attempt rate limiting (max 3 per 15 min), and refresh token rotation with JTI replay prevention. |
 | Graceful shutdown | Implemented in auth entrypoint | HTTP, queue, Redis, database, telemetry, and collectors are shut down. |
 | Separate migration step | Implemented | `cmd/migrate` runs migrations explicitly; `SKIP_MIGRATIONS=true` prevents normal startup from executing them. |
 
@@ -40,20 +42,18 @@ This file tracks the implementation against the modular-monolith and matching/ge
 
 ## Verification
 
-- `cmd/core`, `cmd/matching`, and `cmd/geospatial` are valid Go entrypoints.
-- Focused service packages are tested where repository dependencies permit.
-- Full repository verification remains subject to existing unrelated compile errors documented in the task log, including `models.Flag` and duplicate search index declarations.
+- All service entrypoints (`cmd/auth`, `cmd/core`, `cmd/matching`, `cmd/geospatial`, `cmd/migrate`, `cmd/notification`, `cmd/search`) build cleanly.
+- Full repository compilation, unit testing, and static analysis now pass with zero errors across all packages.
 
 Build/test verification completed:
 
 ```text
-go build ./cmd/core
-go build ./cmd/matching
-go build ./cmd/geospatial
-go test ./internal/services/matching ./internal/services/geospatial ./pkg/monitoring
+go build ./cmd/...
+go test ./...
+go vet ./...
 ```
 
-All commands above pass.
+All commands above pass cleanly.
 
 Windows build note: when the workspace already contains `matching.exe`, use
 explicit `-o` paths for multiple command builds to avoid Go's executable-name
@@ -70,7 +70,7 @@ collision. Explicit-output builds for all three commands pass.
 
 The database has one identity table: `users`. The role column distinguishes `customer`, `isp`, `technician`, and `admin`. “Client” is legacy API/model terminology and is not a second table or identity type. Foreign keys use `customer_id`, `isp_id`, and `technician_id` against `users.id`, with role predicates in provider queries. No duplicate client/user identity structure was introduced.
 
-Known runtime risks remain: the geospatial technician adapter currently uses a broad active-technician query until technician location/coverage tables are normalized, and matching repository listing/assignment routes are incomplete. These are recorded as pending rather than silently treated as production complete.
+Known runtime risks remain: the geospatial technician adapter currently uses a broad active-technician query until technician location/coverage tables are normalized. Matching request listing is now implemented; provider assignment routes remain incomplete. These are recorded as pending rather than silently treated as production complete.
 
 ## Marketplace Scenarios
 
@@ -89,7 +89,7 @@ Known runtime risks remain: the geospatial technician adapter currently uses a b
 
 | Capability | Status | API / behavior |
 |---|---|---|
-| Link technician to ISP | Implemented | `POST /api/v1/my/technicians/:id/link`; creates a stable company technician number and links `users.isp_id`. |
+| Link technician to ISP | Implemented | `POST /api/v1/my/technicians/:id/link`; creates or reuses a stable company technician number and links `users.isp_id`. `POST /my/technicians` also links newly invited technicians; independent accounts remain unlinked until an ISP explicitly links them. |
 | List ISP technicians | Implemented | `GET /api/v1/my/technicians`; returns linked technician users and company metadata. |
 | End company technician link | Implemented | `POST /api/v1/my/technicians/:id/end`; records end time and clears active `users.isp_id`. |
 | Technician “works with” profile | Implemented | Public technician profile includes `works_with` with company name, company technician ID, phone snapshot, and start/end dates. |

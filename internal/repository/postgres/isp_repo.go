@@ -15,11 +15,19 @@ type ispRepo struct {
 	dbWriter *sql.DB
 }
 
-func NewISPRepo() *ispRepo {
-	return &ispRepo{
-		dbReader: database.GetReader(),
-		dbWriter: database.GetWriter(),
+func NewISPRepo() (*ispRepo, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
 	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &ispRepo{
+		dbReader: reader,
+		dbWriter: writer,
+	}, nil
 }
 
 func (r *ispRepo) GetISPs() ([]*models.ISP, error) {
@@ -60,7 +68,7 @@ func (r *ispRepo) GetISPByID(ispID string) (*models.ISP, error) {
 }
 
 func (r *ispRepo) GetISPPackages(ispID string) ([]*models.ISPPackage, error) {
-	query := `SELECT p.id,p.isp_id,p.name,p.category,p.speed_value,COALESCE(p.speed_unit_id::text,''),COALESCE(su.symbol,''),p.base_price,p.base_price,p.billing_cycle,p.capacity_type,COALESCE(p.capacity_value,0),COALESCE(p.capacity_unit_id::text,''),COALESCE(cu.symbol,''),p.is_active,p.description FROM isp_packages p LEFT JOIN package_units su ON su.id=p.speed_unit_id LEFT JOIN package_units cu ON cu.id=p.capacity_unit_id WHERE p.isp_id=$1 ORDER BY p.is_active DESC,p.base_price,p.speed_value`
+	query := `SELECT p.id,p.isp_id,p.name,p.category,p.speed_value,COALESCE(p.speed_unit_id::text,''),COALESCE(su.symbol,''),p.base_price,p.base_price,p.billing_cycle,p.capacity_type,COALESCE(p.capacity_value,0),COALESCE(p.capacity_unit_id::text,''),COALESCE(cu.symbol,''),p.is_active,p.description,p.tier,p.overage_price FROM isp_packages p LEFT JOIN package_units su ON su.id=p.speed_unit_id LEFT JOIN package_units cu ON cu.id=p.capacity_unit_id WHERE p.isp_id=$1 ORDER BY p.is_active DESC,p.base_price,p.speed_value`
 	rows, err := r.dbReader.Query(query, ispID)
 	if err != nil {
 		return nil, err
@@ -95,11 +103,11 @@ func (r *ispRepo) CreatePackage(pkg *models.ISPPackage) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO isp_packages (id,isp_id,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,is_active,description,version,max_subscriptions,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,$13,1,NULLIF($14,0),now())`, pkg.ID, pkg.ISP_ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, pkg.MaxSubscriptions)
+	_, err = tx.Exec(`INSERT INTO isp_packages (id,isp_id,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,is_active,description,version,max_subscriptions,tier,overage_price,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,$13,1,NULLIF($14,0),$15,$16,now())`, pkg.ID, pkg.ISP_ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions) VALUES(gen_random_uuid(),$1,1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,0),NULLIF($10,'')::uuid,$11,NULLIF($12,0))`, pkg.ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions)
+	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions,tier,overage_price) VALUES(gen_random_uuid(),$1,1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,0),NULLIF($10,'')::uuid,$11,NULLIF($12,0),$13,$14)`, pkg.ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
 	if err != nil {
 		return err
 	}
@@ -124,11 +132,11 @@ func (r *ispRepo) UpdatePackage(pkg *models.ISPPackage) error {
 	if activeSubscriptions > 0 {
 		return fmt.Errorf("package has active subscriptions and cannot be changed")
 	}
-	_, err = tx.Exec(`UPDATE isp_packages SET name=$1,category=$2,speed_value=$3,speed_unit_id=$4,base_price=$5,billing_cycle=$6,capacity_type=$7,capacity_value=NULLIF($8,0),capacity_unit_id=NULLIF($9,'')::uuid,is_active=$10,description=$11,version=$12,max_subscriptions=NULLIF($13,0),updated_at=now() WHERE id=$14 AND isp_id=$15`, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, version, pkg.MaxSubscriptions, pkg.ID, pkg.ISP_ID)
+	_, err = tx.Exec(`UPDATE isp_packages SET name=$1,category=$2,speed_value=$3,speed_unit_id=$4,base_price=$5,billing_cycle=$6,capacity_type=$7,capacity_value=NULLIF($8,0),capacity_unit_id=NULLIF($9,'')::uuid,is_active=$10,description=$11,version=$12,max_subscriptions=NULLIF($13,0),tier=$14,overage_price=$15,updated_at=now() WHERE id=$16 AND isp_id=$17`, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, version, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice, pkg.ID, pkg.ISP_ID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,NULLIF($13,0))`, pkg.ID, version, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions)
+	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions,tier,overage_price) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,NULLIF($13,0),$14,$15)`, pkg.ID, version, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
 	if err != nil {
 		return err
 	}
@@ -197,7 +205,7 @@ func (r *ispRepo) ListISPsByPackage(filter models.PackageFilter) ([]*models.ISP,
 }
 
 func scanPackage(scanner interface{ Scan(...interface{}) error }, pkg *models.ISPPackage) error {
-	if err := scanner.Scan(&pkg.ID, &pkg.ISP_ID, &pkg.Name, &pkg.Category, &pkg.SpeedValue, &pkg.SpeedUnitID, &pkg.SpeedUnit, &pkg.BasePrice, &pkg.EffectivePrice, &pkg.BillingCycle, &pkg.CapacityType, &pkg.CapacityValue, &pkg.CapacityUnitID, &pkg.CapacityUnit, &pkg.IsActive, &pkg.Description); err != nil {
+	if err := scanner.Scan(&pkg.ID, &pkg.ISP_ID, &pkg.Name, &pkg.Category, &pkg.SpeedValue, &pkg.SpeedUnitID, &pkg.SpeedUnit, &pkg.BasePrice, &pkg.EffectivePrice, &pkg.BillingCycle, &pkg.CapacityType, &pkg.CapacityValue, &pkg.CapacityUnitID, &pkg.CapacityUnit, &pkg.IsActive, &pkg.Description, &pkg.Tier, &pkg.OveragePrice); err != nil {
 		return err
 	}
 	pkg.Speed = fmt.Sprintf("%g %s", pkg.SpeedValue, pkg.SpeedUnit)
@@ -243,7 +251,7 @@ func (r *ispRepo) ListPackages(filter models.PackageFilter) ([]*models.ISPPackag
 		filter.Limit = 50
 	}
 	args = append(args, filter.Limit)
-	query := fmt.Sprintf(`SELECT p.id,p.isp_id,p.name,p.category,p.speed_value,p.speed_unit_id,su.symbol,p.base_price,COALESCE(cp.price,p.base_price),p.billing_cycle,p.capacity_type,COALESCE(p.capacity_value,0),COALESCE(p.capacity_unit_id::text,''),COALESCE(cu.symbol,''),p.is_active,p.description FROM isp_packages p JOIN package_units su ON su.id=p.speed_unit_id LEFT JOIN package_units cu ON cu.id=p.capacity_unit_id LEFT JOIN isp_package_county_prices cp ON cp.package_id=p.id AND lower(cp.county)=lower($1) WHERE %s ORDER BY %s LIMIT $%d`, strings.Join(where, " AND "), order, len(args))
+	query := fmt.Sprintf(`SELECT p.id,p.isp_id,p.name,p.category,p.speed_value,p.speed_unit_id,su.symbol,p.base_price,COALESCE(cp.price,p.base_price),p.billing_cycle,p.capacity_type,COALESCE(p.capacity_value,0),COALESCE(p.capacity_unit_id::text,''),COALESCE(cu.symbol,''),p.is_active,p.description,p.tier,p.overage_price FROM isp_packages p JOIN package_units su ON su.id=p.speed_unit_id LEFT JOIN package_units cu ON cu.id=p.capacity_unit_id LEFT JOIN isp_package_county_prices cp ON cp.package_id=p.id AND lower(cp.county)=lower($1) WHERE %s ORDER BY %s LIMIT $%d`, strings.Join(where, " AND "), order, len(args))
 	rows, err := r.dbReader.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -385,12 +393,12 @@ func (r *ispRepo) CreatePackageSubscription(reservationID, customerID string) (*
 	}
 	defer tx.Rollback()
 	s := &models.PackageSubscription{ID: uuid.NewString(), Status: "pending", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-	err = tx.QueryRow(`SELECT r.package_id,r.package_version_id,p.isp_id,r.county,COALESCE(cp.price,v.base_price),v.name,v.category,v.speed_value,u.symbol FROM package_capacity_reservations r JOIN isp_packages p ON p.id=r.package_id JOIN isp_package_versions v ON v.id=r.package_version_id JOIN package_units u ON u.id=v.speed_unit_id LEFT JOIN isp_package_county_prices cp ON cp.package_id=p.id AND lower(cp.county)=lower(r.county) WHERE r.id=$1 AND r.customer_id=$2 AND r.status='reserved' AND r.expires_at>now() FOR UPDATE`, reservationID, customerID).Scan(&s.PackageID, &s.PackageVersionID, &s.ISPID, &s.County, &s.Price, &s.PackageName, &s.Category, &s.SpeedValue, &s.SpeedUnit)
+	err = tx.QueryRow(`SELECT r.package_id,r.package_version_id,p.isp_id,r.county,COALESCE(cp.price,v.base_price),v.name,v.category,v.speed_value,u.symbol,v.tier,v.billing_cycle,COALESCE(v.capacity_value,0),v.overage_price FROM package_capacity_reservations r JOIN isp_packages p ON p.id=r.package_id JOIN isp_package_versions v ON v.id=r.package_version_id JOIN package_units u ON u.id=v.speed_unit_id LEFT JOIN isp_package_county_prices cp ON cp.package_id=p.id AND lower(cp.county)=lower(r.county) WHERE r.id=$1 AND r.customer_id=$2 AND r.status='reserved' AND r.expires_at>now() FOR UPDATE`, reservationID, customerID).Scan(&s.PackageID, &s.PackageVersionID, &s.ISPID, &s.County, &s.Price, &s.PackageName, &s.Category, &s.SpeedValue, &s.SpeedUnit, &s.Tier, &s.BillingCycle, &s.IncludedUsage, &s.OveragePrice)
 	if err != nil {
 		return nil, err
 	}
 	s.CustomerID = customerID
-	_, err = tx.Exec(`INSERT INTO package_subscriptions(id,package_id,package_version_id,customer_id,isp_id,reservation_id,status,county,price,package_name,category,speed_value,speed_unit,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$13)`, s.ID, s.PackageID, s.PackageVersionID, s.CustomerID, s.ISPID, reservationID, s.County, s.Price, s.PackageName, s.Category, s.SpeedValue, s.SpeedUnit, s.CreatedAt)
+	_, err = tx.Exec(`INSERT INTO package_subscriptions(id,package_id,package_version_id,customer_id,isp_id,reservation_id,status,county,price,package_name,category,speed_value,speed_unit,tier,billing_cycle,included_usage,overage_price,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)`, s.ID, s.PackageID, s.PackageVersionID, s.CustomerID, s.ISPID, reservationID, s.County, s.Price, s.PackageName, s.Category, s.SpeedValue, s.SpeedUnit, s.Tier, s.BillingCycle, s.IncludedUsage, s.OveragePrice, s.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +424,11 @@ func (r *ispRepo) UpdatePackageSubscription(id, actor, status string, endsAt *ti
 	if !allowed[current][status] {
 		return fmt.Errorf("invalid subscription transition from %s to %s", current, status)
 	}
-	res, err := tx.Exec(`UPDATE package_subscriptions SET status=$1,started_at=CASE WHEN $1='active' AND started_at IS NULL THEN now() ELSE started_at END,ends_at=COALESCE($2,ends_at),updated_at=now() WHERE id=$3`, status, endsAt, id)
+	res, err := tx.Exec(`UPDATE package_subscriptions SET status=$1,
+		started_at=CASE WHEN $1='active' AND started_at IS NULL THEN now() ELSE started_at END,
+		current_period_start=CASE WHEN $1='active' AND current_period_start IS NULL THEN now() ELSE current_period_start END,
+		current_period_end=CASE WHEN $1='active' AND current_period_end IS NULL THEN now()+CASE billing_cycle WHEN 'weekly' THEN interval '7 days' WHEN 'yearly' THEN interval '1 year' ELSE interval '1 month' END ELSE current_period_end END,
+		ends_at=COALESCE($2,ends_at),updated_at=now() WHERE id=$3`, status, endsAt, id)
 	if err != nil {
 		return err
 	}
@@ -434,7 +446,7 @@ func (r *ispRepo) ListPackageSubscriptions(userID, role, status string, limit in
 	if role == "isp" {
 		field = "isp_id"
 	}
-	rows, err := r.dbReader.Query(`SELECT id,package_id,package_version_id,customer_id,isp_id,status,county,price,package_name,category,speed_value,speed_unit,started_at,ends_at,created_at,updated_at FROM package_subscriptions WHERE `+field+`=$1 AND ($2='' OR status=$2) ORDER BY created_at DESC LIMIT $3`, userID, status, limit)
+	rows, err := r.dbReader.Query(`SELECT id,package_id,package_version_id,customer_id,isp_id,status,county,price,package_name,category,speed_value,speed_unit,tier,billing_cycle,auto_renew,included_usage,usage_value,overage_price,overage_amount,started_at,ends_at,current_period_start,current_period_end,created_at,updated_at FROM package_subscriptions WHERE `+field+`=$1 AND ($2='' OR status=$2) ORDER BY created_at DESC LIMIT $3`, userID, status, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -442,10 +454,65 @@ func (r *ispRepo) ListPackageSubscriptions(userID, role, status string, limit in
 	out := []*models.PackageSubscription{}
 	for rows.Next() {
 		s := &models.PackageSubscription{}
-		if err := rows.Scan(&s.ID, &s.PackageID, &s.PackageVersionID, &s.CustomerID, &s.ISPID, &s.Status, &s.County, &s.Price, &s.PackageName, &s.Category, &s.SpeedValue, &s.SpeedUnit, &s.StartedAt, &s.EndsAt, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.PackageID, &s.PackageVersionID, &s.CustomerID, &s.ISPID, &s.Status, &s.County, &s.Price, &s.PackageName, &s.Category, &s.SpeedValue, &s.SpeedUnit, &s.Tier, &s.BillingCycle, &s.AutoRenew, &s.IncludedUsage, &s.UsageValue, &s.OveragePrice, &s.OverageAmount, &s.StartedAt, &s.EndsAt, &s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+func (r *ispRepo) SetPackageAutoRenew(subscriptionID, customerID string, enabled bool) error {
+	result, err := r.dbWriter.Exec(`UPDATE package_subscriptions SET auto_renew=$1,updated_at=now()
+		WHERE id=$2 AND customer_id=$3 AND status IN ('pending','active','suspended')`, enabled, subscriptionID, customerID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *ispRepo) RecordPackageUsage(event *models.PackageUsageEvent) (*models.PackageSubscription, error) {
+	tx, err := r.dbWriter.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`INSERT INTO package_usage_events(id,subscription_id,isp_id,usage_value,external_ref,measured_at)
+		SELECT $1,s.id,$3,$4,$5,$6 FROM package_subscriptions s WHERE s.id=$2 AND s.isp_id=$3 AND s.status='active'
+		ON CONFLICT(subscription_id,external_ref) DO NOTHING`, event.ID, event.SubscriptionID, event.ISPID, event.UsageValue, event.ExternalRef, event.MeasuredAt)
+	if err != nil {
+		return nil, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	_, err = tx.Exec(`UPDATE package_subscriptions SET usage_value=usage_value+$1,
+		overage_amount=ROUND(GREATEST(usage_value+$1-included_usage,0)*overage_price,2),updated_at=now() WHERE id=$2`, event.UsageValue, event.SubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	items, err := r.ListPackageSubscriptions(event.ISPID, "isp", "", 100)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == event.SubscriptionID {
+			return item, nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }

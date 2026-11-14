@@ -27,24 +27,38 @@ type TechnicianHandler struct {
 }
 
 // NewTechnicianHandler creates a new TechnicianHandler.
-func NewTechnicianHandler() *TechnicianHandler {
-	userRepo := postgres.NewUserRepo()
-	userService := user.NewUserService(userRepo)
-	reviewRepo := postgres.NewReviewRepo()
-	reviewService := review.NewReviewService(reviewRepo)
-	jobRequestService := jobrequest.NewService(redisrepo.NewCachedJobRepository(postgres.NewJobRequestRepo(), database.GetRedis()))
-	portfolioService := techsvc.NewService(postgres.NewTechnicianRepository())
-	return &TechnicianHandler{
-		userService:       userService,
-		reviewService:     reviewService,
-		jobRequestService: jobRequestService,
-		portfolioService:  portfolioService,
+func NewTechnicianHandler() (*TechnicianHandler, error) {
+	userRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
 	}
+	reviewRepo, err := postgres.NewReviewRepo()
+	if err != nil {
+		return nil, err
+	}
+	jobRepo, err := postgres.NewJobRequestRepo()
+	if err != nil {
+		return nil, err
+	}
+	techRepo, err := postgres.NewTechnicianRepository()
+	if err != nil {
+		return nil, err
+	}
+	redisClient, err := database.MustRedis()
+	if err != nil {
+		return nil, err
+	}
+	return &TechnicianHandler{
+		userService:       user.NewUserService(userRepo),
+		reviewService:     review.NewReviewService(reviewRepo),
+		jobRequestService: jobrequest.NewService(redisrepo.NewCachedJobRepository(jobRepo, redisClient)),
+		portfolioService:  techsvc.NewService(techRepo),
+	}, nil
 }
 
 // GetProfile returns the technician's profile.
 func (h *TechnicianHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-	technicianID := r.Context().Value("userID").(string)
+	technicianID := userIDFromContext(r.Context())
 	user, err := h.userService.GetUserByID(technicianID)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "User not found")
@@ -159,7 +173,7 @@ func (h *TechnicianHandler) UpdateJobStatus(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusBadRequest, "invalid request payload")
 		return
 	}
-	job, err := h.jobRequestService.RespondAsTechnician(userIDFromContext(r.Context()), requestID, strings.ToLower(strings.TrimSpace(request.Status)))
+	job, err := h.jobRequestService.RespondWithWarranty(userIDFromContext(r.Context()), requestID, strings.ToLower(strings.TrimSpace(request.Status)), request.WarrantyDays)
 	if err != nil {
 		h.respondJobRequestError(w, err)
 		return
@@ -235,10 +249,12 @@ func (h *TechnicianHandler) CreateTechnicianReview(w http.ResponseWriter, r *htt
 	}
 
 	var req struct {
-		Rating       int    `json:"rating"`
-		Comment      string `json:"comment"`
-		CompanyID    string `json:"company_id,omitempty"`
-		EngagementID string `json:"engagement_id,omitempty"`
+		Rating       int      `json:"rating"`
+		Comment      string   `json:"comment"`
+		CompanyID    string   `json:"company_id,omitempty"`
+		EngagementID string   `json:"engagement_id,omitempty"`
+		JobRequestID string   `json:"job_request_id,omitempty"`
+		PhotoURLs    []string `json:"photo_urls,omitempty"`
 	}
 
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -264,13 +280,15 @@ func (h *TechnicianHandler) CreateTechnicianReview(w http.ResponseWriter, r *htt
 		UserID:       userID,
 		CompanyID:    req.CompanyID,
 		EngagementID: req.EngagementID,
+		JobRequestID: req.JobRequestID,
+		PhotoURLs:    req.PhotoURLs,
 		Rating:       req.Rating,
 		Comment:      req.Comment,
 		CreatedAt:    time.Now().UTC(),
 	}
 
 	if err := h.reviewService.CreateReview(review); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed to create review")
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

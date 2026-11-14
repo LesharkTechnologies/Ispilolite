@@ -8,12 +8,14 @@ import (
 )
 
 type RegisterRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Name     string `json:"name" binding:"required"`
-	Email    string `json:"email,omitempty" binding:"omitempty,email"`
-	Role     string `json:"role,omitempty"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Phone        string `json:"phone" binding:"required"`
+	Name         string `json:"name" binding:"required"`
+	Email        string `json:"email,omitempty" binding:"omitempty,email"`
+	Role         string `json:"role,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Locale       string `json:"locale,omitempty"`
 }
 
 type LoginRequest struct {
@@ -43,6 +45,8 @@ type ISPPackageRequest struct {
 	MaxSubscriptions int     `json:"max_subscriptions,omitempty"`
 	Description      string  `json:"description"`
 	IsActive         *bool   `json:"is_active,omitempty"`
+	Tier             string  `json:"tier,omitempty"`
+	OveragePrice     float64 `json:"overage_price,omitempty"`
 }
 type ISPPackagePriceRequest struct {
 	County string  `json:"county"`
@@ -73,6 +77,7 @@ type UpdateProfileRequest struct {
 	Name     string       `json:"name,omitempty"`
 	Email    string       `json:"email,omitempty"`
 	Location *LocationDTO `json:"location,omitempty"`
+	Locale   string       `json:"locale,omitempty"`
 }
 
 type LocationDTO struct {
@@ -124,7 +129,8 @@ type JobAvailabilityRequest struct {
 	Available bool `json:"available"`
 }
 type JobRequestStatusRequest struct {
-	Status string `json:"status"`
+	Status       string `json:"status"`
+	WarrantyDays int    `json:"warranty_days,omitempty"`
 }
 type JobLifecycleRequest struct {
 	EndsAt string `json:"ends_at,omitempty"`
@@ -192,6 +198,14 @@ type PackageSubscriptionRequest struct {
 type PackageSubscriptionStatusRequest struct {
 	Status string `json:"status"`
 	EndsAt string `json:"ends_at,omitempty"`
+}
+type PackageAutoRenewRequest struct {
+	AutoRenew bool `json:"auto_renew"`
+}
+type PackageUsageRequest struct {
+	UsageValue  float64 `json:"usage_value"`
+	ExternalRef string  `json:"external_ref"`
+	MeasuredAt  string  `json:"measured_at,omitempty"`
 }
 
 type UpdateISPProfileRequest struct {

@@ -26,6 +26,7 @@ type JobRepository interface {
 	UpdateJobStatus(id, actor, status string) error
 	AssignTechnician(requestID, ispID, technicianID string) (*models.JobRequest, error)
 	TerminateJob(requestID, actorID, reason string, endedAt time.Time) error
+	ActivateWarranty(requestID, actorID string, days int) error
 }
 
 var _ JobRepository = (*CachedJobRepository)(nil)
@@ -156,4 +157,18 @@ func (r *CachedJobRepository) TerminateJob(requestID, actorID, reason string, en
 		r.invalidate(requestID)
 	}
 	return err
+}
+
+func (r *CachedJobRepository) ActivateWarranty(requestID, actorID string, days int) error {
+	repo, ok := r.next.(interface {
+		ActivateWarranty(string, string, int) error
+	})
+	if !ok {
+		return fmt.Errorf("warranty is not configured")
+	}
+	if err := repo.ActivateWarranty(requestID, actorID, days); err != nil {
+		return err
+	}
+	r.invalidate(requestID)
+	return nil
 }

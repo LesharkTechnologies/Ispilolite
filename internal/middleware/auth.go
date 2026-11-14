@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Claims defines the structure of the JWT claims.
@@ -16,7 +16,7 @@ type Claims struct {
 	UserID   string `json:"user_id"`
 	Role     string `json:"role"`
 	TokenUse string `json:"token_use"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 var (
@@ -43,8 +43,8 @@ func GenerateJWT(userID, role string, expiryHours int) (string, error) {
 	claims := &Claims{
 		UserID: userID,
 		Role:   role,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			Issuer:    issuer,
 			Subject:   userID,
 		},
@@ -116,10 +116,10 @@ func validateToken(tokenString string) (*Claims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return jwtKey, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 
 	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
+		if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
 			return nil, errors.New("invalid token signature")
 		}
 		return nil, errors.New("invalid token")

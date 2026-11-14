@@ -13,8 +13,12 @@ type NotificationHandler struct {
 	repository *postgres.NotificationRepositoryAdapter
 }
 
-func NewNotificationHandler() *NotificationHandler {
-	return &NotificationHandler{repository: postgres.NewNotificationRepositoryAdapter()}
+func NewNotificationHandler() (*NotificationHandler, error) {
+	repository, err := postgres.NewNotificationRepositoryAdapter()
+	if err != nil {
+		return nil, err
+	}
+	return &NotificationHandler{repository: repository}, nil
 }
 
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +28,7 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "failed to list notifications")
 		return
 	}
-	respondWithJSON(w, http.StatusOK,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: items})
 }
 
 func (h *NotificationHandler) Read(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +37,7 @@ func (h *NotificationHandler) Read(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusNotFound, "notification not found")
 		return
 	}
-	respondWithJSON(w, http.StatusOK,  dto.APIResponse{Success: true, Message: "notification marked as read"})
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "notification marked as read"})
 }
 
 func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {

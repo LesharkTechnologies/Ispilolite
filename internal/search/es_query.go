@@ -67,7 +67,7 @@ func buildTechnicianNearQuery(p dto.GeoParams) map[string]interface{} {
 
 func buildLocationQuery(p dto.SearchParams) map[string]interface{} {
 	filters := compact(termFilter("county", p.County), termFilter("type", p.Role))
-	query := map[string]interface{}{"bool": map[string]interface{}{"filter": filters, "must": map[string]interface{}{"match": map[string]interface{}{"name": p.Query}}}}
+	query := map[string]interface{}{"bool": map[string]interface{}{"filter": filters, "must": map[string]interface{}{"multi_match": map[string]interface{}{"query": p.Query, "fields": []string{"name^3", "aliases^2", "county", "sub_county", "ward"}, "fuzziness": "AUTO"}}}}
 	return map[string]interface{}{"from": p.Offset(), "size": p.PageSize, "query": query, "sort": []interface{}{map[string]interface{}{"popularity_score": "desc"}, map[string]interface{}{"_score": "desc"}}, "suggest": map[string]interface{}{"did_you_mean": map[string]interface{}{"text": p.Query, "term": map[string]interface{}{"field": "name"}}}}
 }
 

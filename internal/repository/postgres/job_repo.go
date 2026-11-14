@@ -14,19 +14,27 @@ type JobRepository struct {
 	writer *sqlx.DB
 }
 
-func NewJobRequestRepo() *JobRepository {
-	return &JobRepository{
-		reader: sqlx.NewDb(database.GetReader(), "postgres"),
-		writer: sqlx.NewDb(database.GetWriter(), "postgres"),
+func NewJobRequestRepo() (*JobRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
 	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &JobRepository{
+		reader: sqlx.NewDb(reader, "postgres"),
+		writer: sqlx.NewDb(writer, "postgres"),
+	}, nil
 }
 
 const jobColumns = `id,customer_id,requester_role,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
-const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
+const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at,warranty_days,warranty_expires_at`
 
 func scanJob(row interface{ Scan(...interface{}) error }) (*models.JobRequest, error) {
 	job := &models.JobRequest{}
-	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt)
+	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt, &job.WarrantyDays, &job.WarrantyExpiresAt)
 	return job, err
 }
 
@@ -153,6 +161,23 @@ func (r *JobRepository) DeleteJobRequest(id, customerID string) error {
 	return nil
 }
 func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
+	if status == "rejected" {
+		result, err := r.writer.Exec(`UPDATE service_requests SET status='open',is_available=true,
+			assigned_technician_id=CASE WHEN assigned_technician_id=$1 THEN NULL ELSE assigned_technician_id END,
+			assigned_isp_id=CASE WHEN assigned_isp_id=$1 THEN NULL ELSE assigned_isp_id END,updated_at=now()
+			WHERE id=$2 AND (target_technician_id=$1 OR target_isp_id=$1 OR assigned_technician_id=$1 OR assigned_isp_id=$1) AND deleted_at IS NULL`, actor, id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	}
 	result, err := r.writer.Exec(`UPDATE service_requests SET status=$1,is_available=CASE WHEN $1 IN ('assigned','accepted','in_progress','completed','cancelled') THEN false ELSE is_available END,updated_at=now() WHERE id=$2 AND (customer_id=$3 OR target_technician_id=$3 OR target_isp_id=$3 OR assigned_technician_id=$3 OR assigned_isp_id=$3) AND deleted_at IS NULL`, status, id, actor)
 	if err != nil {
 		return err
@@ -162,6 +187,23 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		return err
 	}
 	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *JobRepository) ActivateWarranty(id, actor string, days int) error {
+	result, err := r.writer.Exec(`UPDATE service_requests SET warranty_days=$1,
+		warranty_expires_at=CASE WHEN $1>0 THEN now()+($1||' days')::interval ELSE NULL END,updated_at=now()
+		WHERE id=$2 AND status='completed' AND (target_isp_id=$3 OR assigned_isp_id=$3 OR target_technician_id=$3 OR assigned_technician_id=$3)`, days, id, actor)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
 		return sql.ErrNoRows
 	}
 	return nil

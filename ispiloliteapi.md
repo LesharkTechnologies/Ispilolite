@@ -12,7 +12,7 @@
 ### Base URLs
 ```
 Development:  http://localhost:8001-8004
-Production:   https://api.ispilolite.com
+Production:   https://lite.ispilo.co.ke
 ```
 
 ### API Versioning
@@ -47,6 +47,37 @@ Authorization: Bearer <access_token>
   }
 }
 ```
+
+### Security Headers & CORS
+All responses include defense-in-depth security headers:
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Content-Security-Policy: default-src 'self'`
+- `Strict-Transport-Security: max-age=86400; includeSubDomains; preload` (HSTS)
+- Dynamic CORS matching configured via `CORS_ALLOWED_ORIGINS` with full preflight `OPTIONS` (HTTP 204) handling.
+
+### Rate Limiting
+The API implements tiered Redis-backed rate limiting keyed by client IP:
+- **Auth endpoints (`/api/v1/auth/*`)**: 5 requests per minute.
+- **General API endpoints (`/api/v1/*`)**: 300 requests per minute.
+- **Per-phone OTP requests**: Max 3 OTP requests per phone number within a 15-minute window (`otp_attempts:<phone>`). Excess requests return `429 Too Many Requests`.
+
+When rate limits are exceeded, the API responds with HTTP `429 Too Many Requests` and a `Retry-After: <seconds>` header.
+
+### Idempotency Keys
+State-changing endpoints accept an `Idempotency-Key` header:
+```http
+Idempotency-Key: <unique-uuid-or-key>
+```
+- **Redis HTTP Middleware**: Caches successful `2xx` responses with a 24-hour TTL. Duplicate requests with the same key within this window receive the identical cached response with header `Idempotency-Replayed: true`.
+- **Database Storage**: PostgreSQL `idempotency_keys` table persists request hashes (SHA-256) and prevents duplicate execution across critical business operations.
+
+### Phone Number Format (E.164)
+Phone numbers throughout the API must strictly comply with **E.164** international formatting (`^\+[1-9]\d{1,14}$`), e.g. `+254712345678`. Registration and login reject non-compliant formats with HTTP 400.
+
+### Refresh Token Rotation & Replay Protection
+`POST /api/v1/auth/refresh` enforces single-use refresh token rotation with JTI tracking (`jti:<claims.ID>`). Replaying a used refresh token immediately revokes all active refresh sessions for that user.
 
 ---
 
@@ -620,6 +651,26 @@ GET /api/v1/reviews/{target_id}
 
 ### 3.4 Matching Service (Port 8004)
 
+> ⚠️ **Planned/aspirational paths.** The `matching/*` paths in this section are
+> **not registered** on the running API (see `api/routes/routes.go`). Using them
+> returns `404`. The implemented equivalents are:
+>
+> | Documented (not registered) | Implemented today |
+> |---|---|
+> | `POST /api/v1/matching/requests` | `POST /api/v1/my/jobs` (customer) |
+> | `GET /api/v1/matching/requests` | `GET /api/v1/my/jobs` (customer) |
+> | `GET /api/v1/matching/requests/{id}` | `GET /api/v1/my/jobs/{id}` (customer) |
+> | `POST /api/v1/matching/requests/{id}/match` | `GET /api/v1/matches/request/{id}` (customer) |
+> | `POST /api/v1/matching/requests/{id}/quotations` | `POST /api/v1/quotations` (isp/technician) |
+> | `POST /api/v1/matching/quotations/{id}/accept` | `POST /api/v1/quotations/{id}/respond` (customer) |
+> | `GET /api/v1/matching/technician/jobs` | `GET /api/v1/my/technician-jobs` (technician) |
+> | `GET /api/v1/matching/isp/requests` | `GET /api/v1/my/installations` (isp) |
+> | `POST /api/v1/matching/jobs/{id}/assign` | `PUT /api/v1/my/requests/{id}/assign-technician` (isp) |
+> | `PUT /api/v1/matching/jobs/{id}/start` | `PUT /api/v1/jobs/{id}` (technician) |
+> | `PUT /api/v1/matching/jobs/{id}/complete` | `PUT /api/v1/jobs/{id}` (technician) |
+>
+> The JSON shapes below remain a useful contract reference; only the paths differ.
+
 #### Create Installation Request
 ```http
 POST /api/v1/matching/requests
@@ -1054,9 +1105,15 @@ POST /api/v1/matching/jobs/{id}/assign
 
 ## 4. WebSocket Endpoints
 
+> ⚠️ **Not implemented.** The Go backend in this repository has no WebSocket or
+> chat handler (no `/ws/*` route, no chat repository). The endpoints below are
+> design targets only and currently return `404`. For live updates use the
+> implemented Server-Sent Events stream at `GET /api/v1/notifications/stream`.
+> See `rem.md` and `API_KEYS.md` §5.13.
+
 ### 4.1 Real-time Chat
 ```
-ws://api.ispilolite.com/ws/chat?token=<jwt_token>
+ws://lite.ispilo.co.ke/ws/chat?token=<jwt_token>
 ```
 
 **Message Types:**
@@ -1117,7 +1174,7 @@ ws://api.ispilolite.com/ws/chat?token=<jwt_token>
 
 ### 4.2 Job Status Updates
 ```
-ws://api.ispilolite.com/ws/jobs?token=<jwt_token>
+ws://lite.ispilo.co.ke/ws/jobs?token=<jwt_token>
 ```
 
 **Message Types:**
@@ -1402,7 +1459,7 @@ info:
   description: ISP Discovery & Installation Platform
 
 servers:
-  - url: https://api.ispilolite.com/api/v1
+  - url: https://lite.ispilo.co.ke/api/v1
     description: Production
   - url: http://localhost:8001
     description: Development

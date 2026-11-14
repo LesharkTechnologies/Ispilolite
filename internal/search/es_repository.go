@@ -221,7 +221,6 @@ func suggestIndex(domain string) (string, bool) {
 	}
 }
 
-
 // toFloat coerces an ES sort value (usually json.Number/float64) to float64.
 func toFloat(v interface{}) float64 {
 	switch n := v.(type) {

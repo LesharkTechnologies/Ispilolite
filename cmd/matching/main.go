@@ -30,7 +30,11 @@ func main() {
 		log.Fatalf("database startup failed: %v", err)
 	}
 	defer database.CloseDB()
-	service := matching.NewMatchingService(postgres.NewMatchingRepository(), nil)
+	repo, err := postgres.NewMatchingRepository()
+	if err != nil {
+		log.Fatalf("matching repository: %v", err)
+	}
+	service := matching.NewMatchingService(repo, nil)
 	service.StartExpiryWorker(context.Background(), time.Hour, 24*time.Hour)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", monitoring.Handler())

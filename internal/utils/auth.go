@@ -2,8 +2,9 @@ package utils
 
 import (
 	"errors"
+	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -41,15 +42,19 @@ type TokenClaims struct {
 	ID        string `json:"jti"`
 }
 
-// jwtClaims adapts TokenClaims to jwt-go's expected Claims interface via
-// embedded StandardClaims, keeping compatibility with the dgrijalva/jwt-go
-// library already used in internal/middleware/auth.go.
+// jwtClaims adapts TokenClaims to the golang-jwt/v5 Claims interface via the
+// embedded RegisteredClaims type. The library is the maintained successor to
+// the archived dgrijalva/jwt-go module (CVE-2020-26160).
 type jwtClaims struct {
 	UserID   string `json:"user_id"`
 	Role     string `json:"role"`
 	TokenUse string `json:"token_use"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
+
+// allowedMethods restricts verification to the single algorithm this service
+// issues. Rejecting anything else prevents algorithm-confusion attacks.
+var allowedMethods = []string{jwt.SigningMethodHS256.Alg()}
 
 // SignToken signs a TokenClaims set into a compact JWT string.
 func SignToken(secret []byte, claims TokenClaims) (string, error) {
@@ -57,13 +62,13 @@ func SignToken(secret []byte, claims TokenClaims) (string, error) {
 		UserID:   claims.UserID,
 		Role:     claims.Role,
 		TokenUse: claims.TokenUse,
-		StandardClaims: jwt.StandardClaims{
-			Id:        claims.ID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        claims.ID,
 			Issuer:    claims.Issuer,
 			Subject:   claims.Subject,
-			ExpiresAt: claims.Expires,
-			NotBefore: claims.NotBefore,
-			IssuedAt:  claims.IssuedAt,
+			ExpiresAt: numericDate(claims.Expires),
+			NotBefore: numericDate(claims.NotBefore),
+			IssuedAt:  numericDate(claims.IssuedAt),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
@@ -73,12 +78,16 @@ func SignToken(secret []byte, claims TokenClaims) (string, error) {
 // ParseToken parses and validates a JWT string, returning its TokenClaims.
 func ParseToken(secret []byte, tokenString string) (*TokenClaims, error) {
 	c := &jwtClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, c, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return secret, nil
-	})
+	token, err := jwt.ParseWithClaims(tokenString, c,
+		func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
+			return secret, nil
+		},
+		jwt.WithValidMethods(allowedMethods),
+		jwt.WithExpirationRequired(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -91,9 +100,27 @@ func ParseToken(secret []byte, tokenString string) (*TokenClaims, error) {
 		TokenUse:  c.TokenUse,
 		Issuer:    c.Issuer,
 		Subject:   c.Subject,
-		Expires:   c.ExpiresAt,
-		NotBefore: c.NotBefore,
-		IssuedAt:  c.IssuedAt,
-		ID:        c.Id,
+		Expires:   unix(c.ExpiresAt),
+		NotBefore: unix(c.NotBefore),
+		IssuedAt:  unix(c.IssuedAt),
+		ID:        c.ID,
 	}, nil
+}
+
+// numericDate converts a Unix timestamp into a jwt.NumericDate, leaving a
+// zero value unset so the claim is omitted instead of encoding 1970.
+func numericDate(unixSeconds int64) *jwt.NumericDate {
+	if unixSeconds == 0 {
+		return nil
+	}
+	return jwt.NewNumericDate(time.Unix(unixSeconds, 0))
+}
+
+// unix converts a jwt.NumericDate back to a Unix timestamp, treating a nil
+// value as zero.
+func unix(date *jwt.NumericDate) int64 {
+	if date == nil {
+		return 0
+	}
+	return date.Unix()
 }

@@ -12,8 +12,12 @@ import (
 
 type SMSAdminHandler struct{ service *adminsms.Service }
 
-func NewSMSAdminHandler() *SMSAdminHandler {
-	return &SMSAdminHandler{service: adminsms.New(postgres.NewUserRepo(), notification.NewSenderFromEnv())}
+func NewSMSAdminHandler() (*SMSAdminHandler, error) {
+	userRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
+	}
+	return &SMSAdminHandler{service: adminsms.New(userRepo, notification.NewSenderFromEnv())}, nil
 }
 
 func (h *SMSAdminHandler) Send(w http.ResponseWriter, r *http.Request) {
@@ -39,5 +43,5 @@ func (h *SMSAdminHandler) Send(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	respondWithJSON(w, http.StatusAccepted,  dto.APIResponse{Success: true, Message: "SMS accepted", Data: map[string]int{"recipients": count}})
+	respondWithJSON(w, http.StatusAccepted, dto.APIResponse{Success: true, Message: "SMS accepted", Data: map[string]int{"recipients": count}})
 }

@@ -2,8 +2,10 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	"gopkg.in/yaml.v2"
@@ -74,6 +76,15 @@ func GetRedis() *redis.Client {
 	return RedisClient
 }
 
+// MustRedis returns the redis client or an error explaining that it has not
+// been initialized, so callers fail fast instead of dereferencing nil.
+func MustRedis() (*redis.Client, error) {
+	if RedisClient == nil {
+		return nil, errors.New("redis is not initialized: call database.InitRedis before constructing repositories")
+	}
+	return RedisClient, nil
+}
+
 // CloseRedis releases Redis resources during graceful shutdown.
 func CloseRedis() error {
 	if RedisClient == nil {
@@ -82,4 +93,25 @@ func CloseRedis() error {
 	err := RedisClient.Close()
 	RedisClient = nil
 	return err
+}
+
+// RedisClientWrapper wraps *redis.Client with the minimal interface needed by
+// the idempotency package, keeping that package independent of go-redis types.
+type RedisClientWrapper struct {
+	client *redis.Client
+}
+
+// NewRedisClientWrapper wraps a redis.Client for idempotency storage.
+func NewRedisClientWrapper(c *redis.Client) *RedisClientWrapper {
+	return &RedisClientWrapper{client: c}
+}
+
+// Get returns the value for key, or ("", redis.Nil) when the key does not exist.
+func (w *RedisClientWrapper) Get(ctx context.Context, key string) (string, error) {
+	return w.client.Get(ctx, key).Result()
+}
+
+// Set stores value with the given expiration. Zero expiration means no TTL.
+func (w *RedisClientWrapper) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	return w.client.Set(ctx, key, value, expiration).Err()
 }

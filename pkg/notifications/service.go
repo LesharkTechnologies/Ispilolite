@@ -39,6 +39,9 @@ func NewService(repository Repository, sms notification.Sender) *Service {
 }
 
 func (s *Service) SendInApp(userID, kind, title, message string, data map[string]interface{}) error {
+	if s.repository == nil {
+		return fmt.Errorf("notification repository is not configured")
+	}
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(message) == "" {
 		return fmt.Errorf("notification user and message are required")
 	}

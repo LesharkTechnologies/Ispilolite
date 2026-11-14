@@ -12,8 +12,12 @@ import (
 
 type ReviewAdminHandler struct{ service *review.ReviewService }
 
-func NewReviewAdminHandler() *ReviewAdminHandler {
-	return &ReviewAdminHandler{review.NewReviewService(postgres.NewReviewRepo())}
+func NewReviewAdminHandler() (*ReviewAdminHandler, error) {
+	repo, err := postgres.NewReviewRepo()
+	if err != nil {
+		return nil, err
+	}
+	return &ReviewAdminHandler{review.NewReviewService(repo)}, nil
 }
 func (h *ReviewAdminHandler) Pending(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -22,7 +26,7 @@ func (h *ReviewAdminHandler) Pending(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to list reviews")
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Data: items})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
 }
 func (h *ReviewAdminHandler) Moderate(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r.URL.Path, "/api/v1/admin/reviews/")
@@ -38,5 +42,5 @@ func (h *ReviewAdminHandler) Moderate(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, err.Error())
 		return
 	}
-	respondWithJSON(w, 200,  dto.APIResponse{Success: true, Message: "review moderated"})
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "review moderated"})
 }

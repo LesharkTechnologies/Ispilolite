@@ -5,11 +5,11 @@ import "time"
 // Technician is a searchable field technician profile.
 // It extends the base User model with technician-specific attributes.
 type Technician struct {
-	ID        string `db:"id"`
-	UserID    string `db:"user_id"` // Foreign key to users table
+	ID        string `json:"id" db:"id"`
+	UserID    string `json:"user_id" db:"user_id"` // Use this user ID for follows and profile routes.
 	Name      string `json:"name" db:"name"`
 	AvatarURL string `json:"avatar_url" db:"avatar_url"`
-	ISPID     string `db:"isp_id"`
+	ISPID     string `json:"isp_id,omitempty" db:"isp_id"`
 	Phone     string `db:"phone"`
 	Email     string `db:"email"`
 	// Foreign key to isps table
@@ -32,6 +32,13 @@ type Technician struct {
 	Skills []string `json:"skills" db:"-"`
 	// Distance is populated only in geo (near-me) search responses, in km.
 	Distance float64 `json:"distance_km,omitempty" db:"-"`
+
+	// Live location tracking for "On My Way" feature.
+	// LastSeenLat/Lon are the technician's current GPS coordinates.
+	LastSeenLat float64   `json:"last_seen_lat,omitempty" db:"-"`
+	LastSeenLon float64   `json:"last_seen_lon,omitempty" db:"-"`
+	LastSeenAt  time.Time `json:"last_seen_at,omitempty" db:"-"`
+	IsOnline    bool      `json:"is_online,omitempty" db:"-"`
 }
 
 type TechnicianProfile struct {

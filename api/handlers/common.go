@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	dto "ispilolite/api/dto"
@@ -78,8 +80,43 @@ func respondWithJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func respondWithError(w http.ResponseWriter, status int, message string) {
-	respondWithJSON(w, status,  dto.APIResponse{
+	// Never leak internal implementation details in 500 responses.
+	if status >= 500 {
+		message = safeMessage(nil) // generic message; real error logged by caller
+	}
+	respondWithJSON(w, status, dto.APIResponse{
 		Success: false,
 		Message: message,
 	})
+}
+
+// respondWithErrorRaw sends the message as-is to the client. Use only for
+// validation/business errors where the message is safe to expose.
+func respondWithErrorRaw(w http.ResponseWriter, status int, message string) {
+	respondWithJSON(w, status, dto.APIResponse{
+		Success: false,
+		Message: message,
+	})
+}
+
+// respondWithInternalError returns a generic message to the client while
+// logging the real error server-side. Never pass raw err.Error() to clients
+// in production — it can leak SQL structure, file paths, or internal IDs.
+func respondWithInternalError(w http.ResponseWriter, err error) {
+	if err != nil {
+		log.Printf("internal error: %v", err)
+	}
+	respondWithError(w, http.StatusInternalServerError, "internal server error")
+}
+
+// safeMessage returns a client-safe error message. In production it hides
+// implementation details; in development it shows the real message.
+func safeMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if os.Getenv("ENVIRONMENT") == "production" {
+		return "internal server error"
+	}
+	return err.Error()
 }

@@ -12,8 +12,16 @@ import (
 
 type locationRepository struct{ dbReader, dbWriter *sql.DB }
 
-func NewLocationRepository() *locationRepository {
-	return &locationRepository{dbReader: database.GetReader(), dbWriter: database.GetWriter()}
+func NewLocationRepository() (*locationRepository, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
+	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &locationRepository{dbReader: reader, dbWriter: writer}, nil
 }
 
 const locationColumns = `id, name, type, COALESCE(parent_id::text, ''), COALESCE(county, ''), COALESCE(sub_county, ''), COALESCE(ward, ''), latitude, longitude, status, is_verified, submission_count, popularity_score, created_at`

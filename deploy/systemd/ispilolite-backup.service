@@ -1,0 +1,20 @@
+[Unit]
+Description=Ispilolite PostgreSQL backup
+Documentation=file:///opt/ispilolite/docs/disaster-recovery.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/etc/ispilolite/backup.env
+
+[Service]
+Type=oneshot
+User=ispilo
+Group=ispilo
+EnvironmentFile=/etc/ispilolite/backup.env
+ExecStart=/opt/ispilolite/scripts/backup-postgres.sh
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/ispilolite /var/lib/node_exporter/textfile
+TimeoutStartSec=1h

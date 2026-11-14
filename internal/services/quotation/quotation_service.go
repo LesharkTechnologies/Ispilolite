@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
 	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
+	"ispilolite/pkg/documents"
 	"ispilolite/pkg/monitoring"
 	"ispilolite/pkg/queue"
 )
@@ -25,10 +28,21 @@ var (
 type Service struct {
 	quotations repository.QuotationRepository
 	users      repository.UserRepository
+	documents  interface {
+		SaveQuotation(*models.Quotation) (*models.Document, error)
+	}
 }
 
 func NewService(q repository.QuotationRepository, u repository.UserRepository) *Service {
-	return &Service{quotations: q, users: u}
+	return &Service{quotations: q, users: u, documents: documents.NewStore()}
+}
+
+// NewServiceWithDocuments allows tests and alternate object stores to supply a
+// document generator while preserving the default local encrypted-volume path.
+func NewServiceWithDocuments(q repository.QuotationRepository, u repository.UserRepository, store interface {
+	SaveQuotation(*models.Quotation) (*models.Document, error)
+}) *Service {
+	return &Service{quotations: q, users: u, documents: store}
 }
 
 func (s *Service) Finalize(issuerID, role string, req dto.FinalizeQuotationRequest) (*models.Quotation, error) {
@@ -63,6 +77,13 @@ func (s *Service) Finalize(issuerID, role string, req dto.FinalizeQuotationReque
 		return nil, err
 	}
 	q := &models.Quotation{ID: utils.GenerateID(), PublicCode: code, QuotationNumber: number, IssuerID: issuerID, IssuerRole: role, CustomerID: customer.ID, RequestID: strings.TrimSpace(req.RequestID), CompanyName: issuer.Name, CompanyPhone: issuer.Phone, CompanyEmail: issuer.Email, CompanyAddress: strings.TrimSpace(req.CompanyAddress), CompanyLogoURL: strings.TrimSpace(req.CompanyLogoURL), BusinessType: strings.ToUpper(role), CustomerName: customer.Name, CustomerPhone: customer.Phone, CustomerEmail: customer.Email, CustomerLocation: strings.TrimSpace(strings.Join([]string{customer.Town, customer.County}, ", ")), Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), TransportAmount: money(req.TransportAmount), PaymentMethod: strings.ToUpper(strings.TrimSpace(req.PaymentMethod)), PaymentDetails: req.PaymentDetails, Terms: cleanTerms(req.Terms), Notes: strings.TrimSpace(req.Notes), Status: "FINALIZED", CreatedAt: now, UpdatedAt: now, FinalizedAt: now}
+	if q.CompanyLogoURL != "" {
+		urls, err := validation.CloudinaryURLs([]string{q.CompanyLogoURL}, 1)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidQuotation, err)
+		}
+		q.CompanyLogoURL = urls[0]
+	}
 	if q.Currency == "" {
 		q.Currency = "KES"
 	}
@@ -121,7 +142,25 @@ func (s *Service) Finalize(issuerID, role string, req dto.FinalizeQuotationReque
 		return nil, err
 	}
 	monitoring.BusinessEvents.WithLabelValues("quotation.finalized", "success").Inc()
-	queue.PublishBestEffort(queue.NotificationExchange, "notification.push", queue.Event{Type: "quotation.finalized", AggregateID: q.ID, RecipientID: q.CustomerID, Data: map[string]interface{}{"quotation_number": q.QuotationNumber, "public_code": q.PublicCode, "total": q.TotalAmount, "currency": q.Currency}})
+	if s.documents != nil {
+		document, documentErr := s.documents.SaveQuotation(q)
+		if documentErr != nil {
+			// The quotation is already committed. Keep the business operation
+			// successful and expose document generation as an operational error.
+			log.Printf("quotation %s PDF generation failed: %v", q.ID, documentErr)
+		} else if documentErr = s.quotations.CreateQuotationDocument(document); documentErr != nil {
+			log.Printf("quotation %s document record failed: %v", q.ID, documentErr)
+		} else {
+			document.DownloadURL = "/api/v1/documents/" + document.ID + "/download"
+			q.Document = document
+		}
+	}
+	data := map[string]interface{}{"quotation_number": q.QuotationNumber, "public_code": q.PublicCode,
+		"total": q.TotalAmount, "currency": q.Currency, "customer_email": q.CustomerEmail}
+	if q.Document != nil {
+		data["document_url"] = q.Document.DownloadURL
+	}
+	queue.PublishBestEffort(queue.NotificationExchange, "notification.push", queue.Event{Type: "quotation.finalized", AggregateID: q.ID, RecipientID: q.CustomerID, Data: data})
 	return q, nil
 }
 

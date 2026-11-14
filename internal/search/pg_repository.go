@@ -192,7 +192,7 @@ func (r *PostgresRepository) SearchTechnicians(ctx context.Context, p dto.Search
 	}
 	pageArgs = append(pageArgs, p.PageSize, p.Offset())
 	listSQL := fmt.Sprintf(`
-		SELECT t.id, t.user_id, t.name, COALESCE(t.avatar_url,''), t.isp_id, t.isp_name,
+		SELECT t.id, COALESCE(t.user_id::text,''), t.name, COALESCE(t.avatar_url,''), COALESCE(t.isp_id::text,''), t.isp_name,
 		       t.county, t.sub_county, t.village, t.rating, t.jobs_done, t.is_available,
 		       COALESCE(array_agg(DISTINCT tr.role) FILTER (WHERE tr.role IS NOT NULL), '{}') AS roles,
 		       COALESCE(array_agg(DISTINCT ts.skill) FILTER (WHERE ts.skill IS NOT NULL), '{}') AS skills
@@ -248,7 +248,7 @@ func (r *PostgresRepository) SearchTechniciansNear(ctx context.Context, p dto.Ge
 	pageArgs := append([]interface{}{}, args...)
 	pageArgs = append(pageArgs, p.PageSize, p.Offset())
 	listSQL := fmt.Sprintf(`
-		SELECT t.id, t.user_id, t.name, COALESCE(t.avatar_url,''), t.isp_id, t.isp_name,
+		SELECT t.id, COALESCE(t.user_id::text,''), t.name, COALESCE(t.avatar_url,''), COALESCE(t.isp_id::text,''), t.isp_name,
 		       t.county, t.sub_county, t.village, t.rating, t.jobs_done, t.is_available,
 		       COALESCE(array_agg(DISTINCT tr.role) FILTER (WHERE tr.role IS NOT NULL), '{}') AS roles,
 		       COALESCE(array_agg(DISTINCT ts.skill) FILTER (WHERE ts.skill IS NOT NULL), '{}') AS skills,

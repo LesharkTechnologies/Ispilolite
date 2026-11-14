@@ -16,16 +16,28 @@ import (
 
 type AuthHandler struct{ authService *authsvc.AuthService }
 
-func NewAuthHandler() *AuthHandler {
-	userRepo := postgres.NewUserRepo()
-	return &AuthHandler{authService: authsvc.NewAuthService(userRepo, redis.NewCacheRepo())}
+func NewAuthHandler() (*AuthHandler, error) {
+	userRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
+	}
+	cacheRepo, err := redis.NewCacheRepo()
+	if err != nil {
+		return nil, err
+	}
+	return &AuthHandler{authService: authsvc.NewAuthService(userRepo, cacheRepo)}, nil
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req dto.RegisterRequest
-	if err := decodeJSON(w, r, &req); err != nil || strings.TrimSpace(req.Phone) == "" || strings.TrimSpace(req.Name) == "" {
+	if err := decodeJSON(w, r, &req); err != nil || strings.TrimSpace(req.Name) == "" {
 		recordAudit(r, "user.register", "REGISTER", "user", "", "invalid registration request", false, map[string]interface{}{"phone": req.Phone})
 		respondWithError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+	if err := authsvc.ValidatePhone(req.Phone); err != nil {
+		recordAudit(r, "user.register", "REGISTER", "user", "", "invalid phone", false, map[string]interface{}{"phone": req.Phone})
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// Public registration is customer-only. ISP, technician, and admin
@@ -40,7 +52,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, authsvc.ErrUserAlreadyExists) {
 			status = http.StatusConflict
 		}
-		respondWithError(w, status, err.Error())
+		if errors.Is(err, authsvc.ErrInvalidReferral) {
+			status = http.StatusBadRequest
+		}
+		if status == http.StatusInternalServerError {
+			respondWithInternalError(w, err)
+		} else {
+			respondWithError(w, status, err.Error())
+		}
 		return
 	}
 	_, expiresIn, err := h.authService.IssueOTP(user.ID)
@@ -65,6 +84,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if phone == "" && username == "" {
 		respondWithError(w, http.StatusBadRequest, "phone is required for customers; username is required for staff")
 		return
+	}
+	if phone != "" {
+		if err := authsvc.ValidatePhone(phone); err != nil {
+			recordAudit(r, "user.login", "LOGIN", "user", "", "invalid phone", false, map[string]interface{}{"phone": phone})
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if username != "" {
 		if phone != "" || password == "" {

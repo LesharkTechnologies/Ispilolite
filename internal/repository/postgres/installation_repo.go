@@ -11,11 +11,19 @@ type installationRepo struct {
 	dbWriter *sql.DB
 }
 
-func NewInstallationRepo() *installationRepo {
-	return &installationRepo{
-		dbReader: database.GetReader(),
-		dbWriter: database.GetWriter(),
+func NewInstallationRepo() (*installationRepo, error) {
+	reader, err := database.MustReader()
+	if err != nil {
+		return nil, err
 	}
+	writer, err := database.MustWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &installationRepo{
+		dbReader: reader,
+		dbWriter: writer,
+	}, nil
 }
 
 func (r *installationRepo) CreateInstallation(installation *models.Installation) error {

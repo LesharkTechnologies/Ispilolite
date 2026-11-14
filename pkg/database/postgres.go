@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -71,20 +72,22 @@ func InitDB(configPath string) error {
 		return fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	writerDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=require",
+	writerDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		config.Database.PostgresWriter.Host,
 		config.Database.PostgresWriter.Port,
 		config.Database.PostgresWriter.User,
 		config.Database.PostgresWriter.Password,
 		config.Database.PostgresWriter.DBName,
+		dbSSLMode(),
 	)
 
-	readerDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=require",
+	readerDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		config.Database.PostgresReader.Host,
 		config.Database.PostgresReader.Port,
 		config.Database.PostgresReader.User,
 		config.Database.PostgresReader.Password,
 		config.Database.PostgresReader.DBName,
+		dbSSLMode(),
 	)
 	// Neon provides a complete pooled connection string via DATABASE_URL.
 	// Use it for both pools unless an explicit reader URL is supplied.
@@ -135,24 +138,42 @@ func InitDB(configPath string) error {
 		_ = DBReader.Close()
 		return fmt.Errorf("failed to ping reader database: %w", err)
 	}
-	if os.Getenv("SKIP_MIGRATIONS") != "true" {
+	// Production migrations run through cmd/migrate before the API starts.
+	// Development runs them automatically unless explicitly skipped. An
+	// operator may opt in at production startup with RUN_MIGRATIONS=true.
+	runAtStartup := os.Getenv("ENVIRONMENT") != "production" || os.Getenv("RUN_MIGRATIONS") == "true"
+	if os.Getenv("SKIP_MIGRATIONS") == "true" {
+		runAtStartup = false
+	}
+	if runAtStartup {
 		if err := runMigrations(ctx, getenv("MIGRATIONS_PATH", "migrations")); err != nil {
 			_ = DBWriter.Close()
 			_ = DBReader.Close()
 			return fmt.Errorf("database migrations failed: %w", err)
 		}
+	} else {
+		log.Println("automatic database migrations skipped")
 	}
+	if os.Getenv("SKIP_SCHEMA_VERIFY") != "true" {
+		if err := VerifySchema(ctx); err != nil {
+			_ = DBWriter.Close()
+			_ = DBReader.Close()
+			return err
+		}
+	}
+	log.Println("database connection successful; schema ready")
+	return nil
+}
+
+// VerifySchema verifies the required core tables on both pools. Migration
+// commands call this after applying migrations; API startup calls it directly.
+func VerifySchema(ctx context.Context) error {
 	if err := verifySchema(ctx, DBWriter); err != nil {
-		_ = DBWriter.Close()
-		_ = DBReader.Close()
 		return fmt.Errorf("writer schema verification failed: %w", err)
 	}
 	if err := verifySchema(ctx, DBReader); err != nil {
-		_ = DBWriter.Close()
-		_ = DBReader.Close()
 		return fmt.Errorf("reader schema verification failed: %w", err)
 	}
-	log.Println("database connection successful; schema ready")
 	return nil
 }
 
@@ -258,6 +279,13 @@ func verifySchema(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// LoadDotEnv loads KEY=VALUE pairs from path into the process environment,
+// ignoring keys that are already set. Entrypoints call it before validating
+// configuration so a local .env is honored by pkg/config.
+func LoadDotEnv(path string) {
+	loadDotEnv(path)
+}
+
 func loadDotEnv(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -285,6 +313,45 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Ready reports whether every shared dependency (writer, reader, Redis) has
+// been initialized. Entrypoints should check this before constructing any
+// repository so a misconfigured deployment fails with a clear message instead
+// of a nil-pointer dereference on the first query.
+func Ready() bool {
+	return DBWriter != nil && DBReader != nil && RedisClient != nil
+}
+
+// dbSSLMode returns the PostgreSQL sslmode. Defaults to "require" in production
+// and "disable" for local development. Override with DB_SSL_MODE.
+func dbSSLMode() string {
+	if mode := os.Getenv("DB_SSL_MODE"); mode != "" {
+		return mode
+	}
+	if env := os.Getenv("ENVIRONMENT"); env != "" && env == "production" {
+		return "require"
+	}
+	return "disable"
+}
+
+// MustWriter returns the writer pool or an error explaining that the database
+// has not been initialized. Repository constructors that panic on a nil pool
+// must go through this guard.
+func MustWriter() (*sql.DB, error) {
+	if DBWriter == nil {
+		return nil, errors.New("database is not initialized: call database.InitDB before constructing repositories")
+	}
+	return DBWriter, nil
+}
+
+// MustReader returns the read-replica pool or an error explaining that the
+// database has not been initialized.
+func MustReader() (*sql.DB, error) {
+	if DBReader == nil {
+		return nil, errors.New("database is not initialized: call database.InitDB before constructing repositories")
+	}
+	return DBReader, nil
 }
 
 // GetWriter returns the database connection for write operations.
