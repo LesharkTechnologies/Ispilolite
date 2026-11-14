@@ -19,7 +19,7 @@ func (s *followRepoStub) Active(_ context.Context, id string) (bool, error)    {
 func (*followRepoStub) Follow(context.Context, string, string) (bool, error)   { return true, nil }
 func (*followRepoStub) Unfollow(context.Context, string, string) (bool, error) { return true, nil }
 func (*followRepoStub) Summary(_ context.Context, id, _ string) (*models.FollowSummary, error) {
-	return &models.FollowSummary{UserID: id, FollowerCount: 1}, nil
+	return &models.FollowSummary{UserID: id, FollowerCount: 1, IsFollowing: true}, nil
 }
 func (*followRepoStub) Followers(_ context.Context, _ string, limit, offset int) (*models.FollowPage, error) {
 	return &models.FollowPage{Items: []*models.FollowProfile{{ID: uuid.NewString(), Name: "Sample", Role: "technician", AvatarURL: "", FollowedAt: time.Now()}}, Total: 1, Limit: limit, Offset: offset}, nil

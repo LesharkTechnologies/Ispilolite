@@ -9,7 +9,7 @@
 #   docker build -f docker/Dockerfile --build-arg TARGET=migrate -t ispilolite-migrate .
 #   docker build -f docker/Dockerfile --build-arg TARGET=notification -t ispilolite-notification .
 
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.26
 
 FROM golang:${GO_VERSION}-alpine AS build
 
