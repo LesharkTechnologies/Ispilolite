@@ -204,6 +204,13 @@ RABBITMQ_PREFETCH=20
 NOTIFICATION_WEBHOOK_URL=https://notifications.example.com/deliver
 ADMIN_ALERT_PHONES=+2547XXXXXXXX
 
+# --- Media storage (Cloudinary signed uploads) ---
+CLOUDINARY_CLOUD_NAME=<your-cloud-name>
+CLOUDINARY_API_KEY=<your-public-api-key>
+CLOUDINARY_API_SECRET=<your-server-only-api-secret>
+CLOUDINARY_FOLDER_PREFIX=ispilolite
+CLOUDINARY_ALLOWED_HOSTS=res.cloudinary.com
+
 # --- Storage / audit ---
 DOCUMENT_STORAGE_ROOT=/var/lib/ispilolite/documents
 AUDIT_ARCHIVE_ROOT=/var/lib/ispilolite/audit

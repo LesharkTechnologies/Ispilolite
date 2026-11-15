@@ -1,0 +1,177 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+
+	"ispilolite/api/dto"
+	"ispilolite/internal/middleware"
+	"ispilolite/internal/models"
+	"ispilolite/internal/repository/postgres"
+)
+
+type speedTestReader interface {
+	ISPOptions(string, string) ([]*models.SpeedTestISPOption, error)
+	Create(*models.SpeedTest, string) error
+	ListMine(string, int) ([]*models.SpeedTest, error)
+	Stats(string, string, string) (*models.SpeedTestStats, error)
+}
+
+type speedTestAdminReader interface {
+	ListModeration(string, int) ([]*models.SpeedTestModerationItem, error)
+	Moderate(string, string, string) error
+}
+
+type SpeedTestHandler struct{ repo speedTestReader }
+
+func NewSpeedTestHandler() (*SpeedTestHandler, error) {
+	repo, err := postgres.NewSpeedTestRepository()
+	if err != nil {
+		return nil, err
+	}
+	return &SpeedTestHandler{repo: repo}, nil
+}
+
+func newSpeedTestHandler(repo speedTestReader) *SpeedTestHandler {
+	return &SpeedTestHandler{repo: repo}
+}
+
+// ISPOptions is intentionally public. A user can choose a town before running
+// a test and receive registered ISP suggestions without logging in.
+func (h *SpeedTestHandler) ISPOptions(w http.ResponseWriter, r *http.Request) {
+	items, err := h.repo.ISPOptions(r.URL.Query().Get("county"), r.URL.Query().Get("town"))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"items": items}})
+}
+
+func (h *SpeedTestHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var item models.SpeedTest
+	if decodeJSON(w, r, &item) != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := validateSpeedTest(&item); err != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if item.ISPID != "" {
+		item.ISPSelectionSource = "registered"
+	} else if strings.TrimSpace(item.ISPName) != "" {
+		item.ISPSelectionSource = "user_entered"
+	} else {
+		item.ISPSelectionSource = "none"
+	}
+	item.UserID = userIDFromContext(r.Context())
+	// This is deliberately resolved from the trusted proxy-aware address, not
+	// from a client field or an untrusted X-Forwarded-For header.
+	ip := middleware.ClientIP(r)
+	if strings.TrimSpace(ip) == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "client IP could not be determined")
+		return
+	}
+	if err := h.repo.Create(&item, ip); err != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The response keeps the result private to the submitting user. ISP and
+	// public reporting endpoints use aggregates and never expose this IP.
+	item.Status = "pending"
+	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: item})
+}
+
+func (h *SpeedTestHandler) Mine(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	items, err := h.repo.ListMine(userIDFromContext(r.Context()), limit)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"items": items, "count": len(items)}})
+}
+
+func (h *SpeedTestHandler) ISPStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.repo.Stats(userIDFromContext(r.Context()), r.URL.Query().Get("county"), r.URL.Query().Get("town"))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: stats})
+}
+
+func (h *SpeedTestHandler) AdminQueue(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.repo.(speedTestAdminReader)
+	if !ok {
+		respondWithInternalError(w, nil)
+		return
+	}
+	items, err := repo.ListModeration(r.URL.Query().Get("status"), 50)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"items": items, "count": len(items)}})
+}
+
+func (h *SpeedTestHandler) AdminModerate(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.repo.(speedTestAdminReader)
+	if !ok {
+		respondWithInternalError(w, nil)
+		return
+	}
+	var request struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if decodeJSON(w, r, &request) != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(request.Status))
+	if err := repo.Moderate(pathParam(r.URL.Path, "/api/v1/admin/speed-tests/"), status, request.Reason); err != nil {
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]string{"status": status}})
+}
+
+func validateSpeedTest(item *models.SpeedTest) error {
+	if item.DownloadMbps < 0 || item.DownloadMbps > 100000 {
+		return errSpeed("download_mbps must be between 0 and 100000")
+	}
+	if item.UploadMbps < 0 || item.UploadMbps > 100000 {
+		return errSpeed("upload_mbps must be between 0 and 100000")
+	}
+	if item.LatencyMs < 0 || item.LatencyMs > 60000 {
+		return errSpeed("latency_ms must be between 0 and 60000")
+	}
+	if item.JitterMs != nil && (*item.JitterMs < 0 || *item.JitterMs > 60000) {
+		return errSpeed("jitter_ms must be between 0 and 60000")
+	}
+	if item.PacketLossPercent != nil && (*item.PacketLossPercent < 0 || *item.PacketLossPercent > 100) {
+		return errSpeed("packet_loss_percent must be between 0 and 100")
+	}
+	if item.ISPPlanSpeedMbps != nil && (*item.ISPPlanSpeedMbps < 0 || *item.ISPPlanSpeedMbps > 100000) {
+		return errSpeed("isp_plan_speed_mbps must be between 0 and 100000")
+	}
+	if strings.TrimSpace(item.County) == "" {
+		return errSpeed("county is required")
+	}
+	if len(item.County) > 120 || len(item.Town) > 120 || len(item.ISPName) > 160 {
+		return errSpeed("place and ISP names are too long")
+	}
+	return nil
+}
+
+type speedValidationError string
+
+func (e speedValidationError) Error() string { return string(e) }
+func errSpeed(value string) error            { return speedValidationError(value) }

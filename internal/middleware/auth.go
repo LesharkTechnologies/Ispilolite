@@ -99,6 +99,46 @@ func AuthMiddleware(requiredRole string) func(http.Handler) http.Handler {
 	}
 }
 
+// OptionalAuthMiddleware validates an access token when one is supplied, but
+// still allows anonymous requests. It is used for public actions such as
+// recording an ad impression while attributing signed-in users to aggregate
+// audience insights.
+func OptionalAuthMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			tokenString, err := extractTokenFromHeader(r)
+			if err != nil {
+				http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+				return
+			}
+			claims, err := validateToken(tokenString)
+			if err != nil {
+				http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+				return
+			}
+			if revocationChecker != nil && revocationChecker(tokenString) {
+				http.Error(w, "Unauthorized: token revoked", http.StatusUnauthorized)
+				return
+			}
+			if claims.TokenUse != "access" {
+				http.Error(w, "Unauthorized: access token required", http.StatusUnauthorized)
+				return
+			}
+			if accountActiveChecker != nil && !accountActiveChecker(claims.UserID, claims.Role) {
+				http.Error(w, "Unauthorized: account is not active", http.StatusUnauthorized)
+				return
+			}
+			ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+			ctx = context.WithValue(ctx, "userRole", claims.Role)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // extractTokenFromHeader extracts the JWT from the Authorization header.
 func extractTokenFromHeader(r *http.Request) (string, error) {
 	authHeader := r.Header.Get("Authorization")

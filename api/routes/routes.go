@@ -78,6 +78,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	publicDiscovery, err := handlers.NewPublicDiscoveryHandler(profileLinks)
+	if err != nil {
+		return nil, nil, err
+	}
 	socialHandler, err := handlers.NewSocialHandler()
 	if err != nil {
 		return nil, nil, err
@@ -123,6 +127,19 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 		return nil, nil, err
 	}
 	billing, err := handlers.NewBillingHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	promotion, err := handlers.NewPromotionHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	installationOperations, err := handlers.NewInstallationOperationsHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	mediaHandler := handlers.NewMediaHandler()
+	speedTestHandler, err := handlers.NewSpeedTestHandler()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -269,6 +286,11 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	router.GET("/metrics", gin.WrapH(metricsHandler))
 	// A stable, browser-viewable share link independent of the Flutter build.
 	router.GET("/u/:slug", stdMiddleware(apiLimiter.Middleware), stdHandler(profileHandler.Web))
+	// Public, indexable area pages. They are the share target for WhatsApp and
+	// search results, so they must work without a token or Flutter build.
+	router.GET("/places/:county", stdMiddleware(apiLimiter.Middleware), stdHandler(publicDiscovery.Web))
+	router.GET("/places/:county/:town", stdMiddleware(apiLimiter.Middleware), stdHandler(publicDiscovery.Web))
+	router.GET("/places/:county/:town/:estate", stdMiddleware(apiLimiter.Middleware), stdHandler(publicDiscovery.Web))
 
 	api := router.Group("/api/v1")
 	api.Use(stdMiddleware(apiLimiter.Middleware))
@@ -325,6 +347,17 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.DELETE("/my/devices/:token", socialUserHandler(socialHandler.RemoveDevice))
 	api.GET("/my/public-profile", socialUserHandler(profileHandler.Mine))
 	api.GET("/profiles/:slug", stdHandler(profileHandler.JSON))
+	api.GET("/public/coverage", stdHandler(publicDiscovery.JSON))
+	api.POST("/media/upload-signature", authHandler("", mediaHandler.Signature))
+	api.POST("/media/upload", authHandler("", mediaHandler.Upload))
+	api.GET("/speed-tests/isps", stdHandler(speedTestHandler.ISPOptions))
+	api.POST("/speed-tests", gin.WrapH(middleware.OptionalAuthMiddleware()(http.HandlerFunc(speedTestHandler.Create))))
+	api.GET("/my/speed-tests", authHandlerByRole(map[string]http.HandlerFunc{
+		"customer": speedTestHandler.Mine, "technician": speedTestHandler.Mine, "isp": speedTestHandler.Mine,
+	}))
+	api.GET("/my/speed-tests/stats", authHandler("isp", speedTestHandler.ISPStats))
+	api.GET("/admin/speed-tests", authHandler("admin", speedTestHandler.AdminQueue))
+	api.PATCH("/admin/speed-tests/:id", authHandler("admin", speedTestHandler.AdminModerate))
 
 	api.GET("/isps", stdHandler(isp.GetISPs))
 	api.GET("/isps/:id", ispDispatcher(isp))
@@ -343,6 +376,8 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/geo/locations/by-county", stdHandler(location.ListCountyLocations))
 	api.POST("/geo/locations", authHandler("", location.SubmitLocation))
 	api.GET("/geo/locations/:id", stdHandler(location.GetLocation))
+	api.GET("/serviceability", stdHandler(installationOperations.CheckServiceability))
+	api.POST("/serviceability/waitlist", authHandler("customer", installationOperations.AddWaitlist))
 	api.POST("/geo/locations/:id/aliases", authHandler("", location.AddAlias))
 	api.GET("/matches/request/:id", authHandler("customer", matchingHandler.Match))
 	api.GET("/my/matches", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.MyMatches, "technician": matchingHandler.MyMatches}))
@@ -444,6 +479,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.DELETE("/coverage/polygons/:id", authHandler("", coverageMapHandler.Delete))
 	api.DELETE("/admin/coverage/polygons/:id", authHandler("admin", coverageMapHandler.Delete))
 	api.GET("/my/coverage/recommendations", authHandler("isp", ispEndpoints.GetCoverageRecommendations))
+	api.GET("/my/serviceability", authHandler("isp", installationOperations.ListMyServiceability))
+	api.POST("/my/serviceability", authHandler("isp", installationOperations.UpsertServiceability))
+	api.DELETE("/my/serviceability/:id", authHandler("isp", installationOperations.DeleteServiceability))
+	api.GET("/my/serviceability/waitlist", authHandler("isp", installationOperations.ListWaitlist))
 	api.GET("/my/notifications", authHandler("isp", ispEndpoints.GetNotifications))
 	api.PUT("/my/notifications/:id", authHandler("isp", ispEndpoints.ReadNotification))
 	api.DELETE("/my/notifications/:id", authHandler("isp", notificationsHandler.Delete))
@@ -463,6 +502,9 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/jobs/:id/stream", authHandler("", realtimeHandler.JobStream))
 	api.GET("/jobs/:id/events", authHandler("", realtimeHandler.Events))
 	api.GET("/jobs/:id/location", authHandler("", realtimeHandler.GetLocation))
+	api.POST("/jobs/:id/installation-proof", authHandler("technician", installationOperations.SaveProof))
+	api.GET("/jobs/:id/installation-proof", authHandler("", installationOperations.GetProof))
+	api.POST("/jobs/:id/installation-confirm", authHandler("customer", installationOperations.ConfirmProof))
 	api.POST("/jobs/:id/location", authHandler("technician", realtimeHandler.UpdateLocation))
 	api.GET("/jobs/:id/messages", authHandler("", chatHandler.List))
 	api.POST("/jobs/:id/messages", authHandler("", chatHandler.Send))
@@ -483,6 +525,26 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PATCH("/warranty-claims/:id", authHandlerByRole(map[string]http.HandlerFunc{"isp": warrantyHandler.Resolve, "technician": warrantyHandler.Resolve}))
 
 	api.GET("/admin/deletion-requests", authHandler("admin", admin.GetDeletionRequests))
+	api.GET("/promotions", stdHandler(promotion.Active))
+	api.POST("/promotions/:id/events", gin.WrapH(middleware.OptionalAuthMiddleware()(http.HandlerFunc(promotion.Track))))
+	api.POST("/promotions/:id/enquiry", authHandler("", promotion.CreateEnquiry))
+	api.GET("/my/promotions", socialUserHandler(promotion.ListMine))
+	api.GET("/my/promotions/:id", socialUserHandler(promotion.GetMine))
+	api.POST("/my/promotions", socialUserHandler(promotion.Create))
+	api.POST("/my/promotions/:id/renew", socialUserHandler(promotion.Renew))
+	api.POST("/my/promotions/:id/cancel", socialUserHandler(promotion.Cancel))
+	api.GET("/my/promotions/:id/insights", socialUserHandler(promotion.Insights))
+	api.GET("/my/promotions/:id/payments", socialUserHandler(promotion.Payments))
+	api.GET("/my/promotions/:id/enquiries", socialUserHandler(promotion.Enquiries))
+	api.GET("/admin/promotions", authHandler("admin", promotion.AdminList))
+	api.GET("/admin/promotions/:id", authHandler("admin", promotion.AdminGet))
+	api.GET("/admin/promotions/:id/insights", authHandler("admin", promotion.Insights))
+	api.GET("/admin/promotions/:id/payments", authHandler("admin", promotion.Payments))
+	api.GET("/admin/promotions/:id/enquiries", authHandler("admin", promotion.Enquiries))
+	api.PATCH("/admin/promotions/:id", authHandler("admin", promotion.AdminSetStatus))
+	api.POST("/admin/promotions/:id/approve", authHandler("admin", promotion.AdminApprove))
+	api.POST("/admin/promotions/:id/reject", authHandler("admin", promotion.AdminReject))
+	api.POST("/admin/promotions/:id/payments/:payment_id/confirm", authHandler("admin", promotion.AdminConfirmPayment))
 	api.GET("/billing-systems", stdHandler(billing.List))
 	api.GET("/billing-systems/:id", stdHandler(billing.Get))
 	api.POST("/billing-systems", authHandler("", billing.Create))

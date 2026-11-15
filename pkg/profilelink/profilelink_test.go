@@ -20,6 +20,20 @@ func TestDomainChangeKeepsStoredProfilePath(t *testing.T) {
 	}
 }
 
+func TestOriginKeepsNonProfileShareLinksStable(t *testing.T) {
+	builder, err := New("https://lite.example.com/", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := builder.Origin(); got != "https://lite.example.com" {
+		t.Fatalf("Origin() = %q", got)
+	}
+	var nilBuilder *Builder
+	if got := nilBuilder.Origin(); got != "" {
+		t.Fatalf("nil Origin() = %q", got)
+	}
+}
+
 func TestRejectsInvalidBase(t *testing.T) {
 	for _, base := range []string{"https://evil.example/api/v1", "https://user:pass@example.com", "http://example.com", "https://example.com?token=secret", "not-a-url"} {
 		if _, err := New(base, true); err == nil {

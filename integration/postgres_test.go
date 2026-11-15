@@ -264,6 +264,88 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 	if err := billingRepo.ResolveClaim(context.Background(), claim.ID, ispID, "approved"); err != nil {
 		t.Fatal(err)
 	}
+	promotionRepo, err := postgres.NewPromotionRepository()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, err := promotionRepo.ResolveListing(context.Background(), ispID, "isp", models.PromotionListingBillingSystem, billing.ID)
+	if err != nil || listing.Name != "CI Billing" || listing.InternalPath == "" {
+		t.Fatalf("promotion listing resolution: %#v %v", listing, err)
+	}
+	promotion := &models.Promotion{
+		OwnerID:         ispID,
+		ListingType:     listing.Type,
+		ListingID:       listing.ID,
+		ListingName:     listing.Name,
+		DestinationType: "internal",
+		DestinationURL:  listing.InternalPath,
+		Placement:       "directory",
+		StartsAt:        now,
+		ExpiresAt:       now.AddDate(0, 0, 30),
+		Amount:          250,
+		Currency:        "KES",
+	}
+	if err := promotionRepo.Create(context.Background(), promotion, &models.PromotionPayment{Amount: 250, Currency: "KES"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = database.GetWriter().Exec(`DELETE FROM promotions WHERE id=$1`, promotion.ID) }()
+	storedPromotion, err := promotionRepo.Get(context.Background(), promotion.ID, ispID, "isp")
+	if err != nil || storedPromotion.Status != models.PromotionPendingApproval {
+		t.Fatalf("new promotion: %#v %v", storedPromotion, err)
+	}
+	payments, err := promotionRepo.ListPayments(context.Background(), promotion.ID)
+	if err != nil || len(payments) != 1 {
+		t.Fatalf("promotion payments: %#v %v", payments, err)
+	}
+	if err := promotionRepo.ConfirmPayment(context.Background(), promotion.ID, payments[0].ID, ispID, "manual", "CI-REF-1", "receipt"); err != nil {
+		t.Fatal(err)
+	}
+	storedPromotion, err = promotionRepo.Get(context.Background(), promotion.ID, ispID, "isp")
+	if err != nil || storedPromotion.Status != models.PromotionPendingApproval || storedPromotion.PaymentStatus != "paid" {
+		t.Fatalf("paid promotion should still await approval: %#v %v", storedPromotion, err)
+	}
+	active, err := promotionRepo.Active(context.Background(), "directory", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range active {
+		if item.ID == promotion.ID {
+			t.Fatal("unapproved promotion was visible to customers")
+		}
+	}
+	if err := promotionRepo.Approve(context.Background(), promotion.ID, ispID); err != nil {
+		t.Fatal(err)
+	}
+	storedPromotion, err = promotionRepo.Get(context.Background(), promotion.ID, ispID, "isp")
+	if err != nil || storedPromotion.Status != models.PromotionActive || storedPromotion.ApprovedAt == nil {
+		t.Fatalf("approved promotion: %#v %v", storedPromotion, err)
+	}
+	if recorded, err := promotionRepo.RecordEvent(context.Background(), promotion.ID, "impression", "viewer-1", "customer", "Nairobi", "directory", now.Unix()/300); err != nil || !recorded {
+		t.Fatalf("record impression: %v %v", recorded, err)
+	}
+	if recorded, err := promotionRepo.RecordEvent(context.Background(), promotion.ID, "impression", "viewer-1", "customer", "Nairobi", "directory", now.Unix()/300); err != nil || recorded {
+		t.Fatalf("duplicate impression was counted: %v %v", recorded, err)
+	}
+	if recorded, err := promotionRepo.RecordEvent(context.Background(), promotion.ID, "click", "viewer-1", "customer", "Nairobi", "directory", now.Unix()/60); err != nil || !recorded {
+		t.Fatalf("record click: %v %v", recorded, err)
+	}
+	if recorded, err := promotionRepo.RecordEvent(context.Background(), promotion.ID, "impression", "viewer-2", "isp", "Mombasa", "directory", now.Unix()/900); err != nil || !recorded {
+		t.Fatalf("record second viewer: %v %v", recorded, err)
+	}
+	insights, err := promotionRepo.Insights(context.Background(), promotion.ID, now.Add(-time.Hour), now.Add(time.Hour), "")
+	if err != nil || insights.Totals.Impressions != 2 || insights.Totals.UniqueViewers != 2 || insights.Totals.Clicks != 1 || insights.Totals.UniqueClickers != 1 {
+		t.Fatalf("promotion insights: %#v %v", insights, err)
+	}
+	if _, err := promotionRepo.CreateEnquiry(context.Background(), promotion.ID, customer, "Customer", "", "", "Contact me"); err != nil {
+		t.Fatal(err)
+	}
+	enquiries, total, err := promotionRepo.ListEnquiries(context.Background(), promotion.ID, 10, 0)
+	if err != nil || total != 1 || len(enquiries) != 1 {
+		t.Fatalf("promotion enquiries: %#v %d %v", enquiries, total, err)
+	}
+	if _, err := promotionRepo.Get(context.Background(), promotion.ID, otherISP, "isp"); !errors.Is(err, postgres.ErrPromotionNotFound) {
+		t.Fatalf("unrelated ISP could read promotion: %v", err)
+	}
 	social := socialsvc.NewService(socialRepo)
 	if created, err := social.Favorite(context.Background(), customer, "isp", ispID); err != nil || !created {
 		t.Fatalf("favorite failed: %v %v", created, err)

@@ -139,11 +139,15 @@ func (r *installationRepo) GetInstallationByID(installationID string) (*models.I
 }
 
 func (r *installationRepo) UpdateInstallation(installation *models.Installation) error {
-	allowed := map[string]string{"accepted": "open", "assigned": "open,accepted,assigned", "in_progress": "accepted,assigned", "completed": "in_progress", "cancelled": "open,accepted,assigned,in_progress"}[installation.Status]
+	allowed := map[string]string{"accepted": "open,viewed,quoted", "assigned": "open,accepted,assigned", "scheduled": "open,accepted,assigned", "in_progress": "accepted,assigned,scheduled", "completed": "in_progress", "cancelled": "open,viewed,quoted,accepted,assigned,scheduled,in_progress"}[installation.Status]
 	if allowed == "" {
 		return sql.ErrNoRows
 	}
-	result, err := r.dbWriter.Exec(`UPDATE service_requests SET status=$1,assigned_isp_id=$5,assigned_technician_id=COALESCE(NULLIF($2,'')::uuid,assigned_technician_id),is_available=false,updated_at=$3 WHERE id=$4 AND (target_isp_id=$5 OR assigned_isp_id=$5) AND request_type='internet' AND status=ANY(string_to_array($6,',')) AND deleted_at IS NULL`, installation.Status, installation.TechnicianID, installation.UpdatedAt, installation.ID, installation.IspID, allowed)
+	completionGate := ""
+	if installation.Status == "completed" {
+		completionGate = " AND EXISTS(SELECT 1 FROM installation_proofs p WHERE p.request_id=service_requests.id AND p.customer_confirmed_at IS NOT NULL AND jsonb_array_length(p.photo_urls)>=1 AND p.device_serial<>'' AND p.checklist <> '{}'::jsonb)"
+	}
+	result, err := r.dbWriter.Exec(`UPDATE service_requests SET status=$1,assigned_isp_id=$5,assigned_technician_id=COALESCE(NULLIF($2,'')::uuid,assigned_technician_id),is_available=false,completed_at=CASE WHEN $1='completed' THEN now() ELSE completed_at END,updated_at=$3 WHERE id=$4 AND (target_isp_id=$5 OR assigned_isp_id=$5) AND request_type='internet' AND status=ANY(string_to_array($6,',')) AND deleted_at IS NULL`+completionGate, installation.Status, installation.TechnicianID, installation.UpdatedAt, installation.ID, installation.IspID, allowed)
 	if err != nil {
 		return err
 	}

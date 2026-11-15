@@ -126,6 +126,13 @@ func clientIP(r *http.Request) string {
 	return clientIPWithProxies(r, trustedProxies())
 }
 
+// ClientIP resolves the caller address using the same trusted-proxy rules as
+// the rate limiter. Callers may hash the result for privacy-safe analytics, but
+// must never persist it in raw form.
+func ClientIP(r *http.Request) string {
+	return clientIP(r)
+}
+
 // clientIPWithProxies resolves the client address, only reading
 // X-Forwarded-For when the immediate peer is a trusted proxy. It walks the
 // header from right to left and returns the first address that is not itself a

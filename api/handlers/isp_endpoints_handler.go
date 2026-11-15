@@ -334,7 +334,7 @@ func (h *ISPEndpointsHandler) UpdateInstallation(w http.ResponseWriter, r *http.
 		respondWithError(w, http.StatusBadRequest, "invalid installation update")
 		return
 	}
-	valid := map[string]bool{"accepted": true, "assigned": true, "in_progress": true, "completed": true, "cancelled": true, "rejected": true}
+	valid := map[string]bool{"accepted": true, "assigned": true, "scheduled": true, "in_progress": true, "completed": true, "cancelled": true, "rejected": true}
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	if !valid[req.Status] {
 		respondWithError(w, http.StatusBadRequest, "invalid installation status")

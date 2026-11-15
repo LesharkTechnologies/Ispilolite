@@ -8,11 +8,17 @@ Authorization: Bearer <access-token>
 
 ## Media contract (Cloudinary)
 
-The Go API does **not** receive or proxy image bytes. Flutter uploads directly
-to Cloudinary, then sends the resulting HTTPS delivery URL in `*_urls` fields.
-The API validates the host, stores the URL in PostgreSQL, and returns it on
-reads. Default allowed host: `res.cloudinary.com`; add Cloudinary custom CNAMEs
-with `CLOUDINARY_ALLOWED_HOSTS`.
+The Go API does **not** receive or proxy image bytes. An authenticated client
+first calls `POST /media/upload-signature`, then uploads the file directly to
+Cloudinary using the returned `upload_params`, and finally sends the resulting
+`secure_url` in existing `*_urls` fields. Flutter and browser JavaScript code
+is documented in [`docs/media-upload.md`](media-upload.md).
+
+The API validates the delivery host, stores the URL in PostgreSQL, and returns
+it on reads. Default allowed host: `res.cloudinary.com`; add Cloudinary custom
+CNAMEs with `CLOUDINARY_ALLOWED_HOSTS`. Upload signatures are scoped by media
+kind and by the authenticated user's folder, so one account cannot sign writes
+into another account's folder.
 
 ## New endpoints
 
@@ -44,6 +50,14 @@ with `CLOUDINARY_ALLOWED_HOSTS`.
 | Admin dispute queue | `GET /admin/disputes` |
 | Translation catalog | `GET /i18n/{en|sw}` (public) |
 | Technician earnings | `GET /my/earnings?period=week|month|year` |
+| Signed media upload params | `POST /media/upload-signature` (authenticated) |
+| Server media fallback | `POST /media/upload` (authenticated multipart) |
+| ISP suggestions for speed tests | `GET /speed-tests/isps?county=&town=` (public) |
+| Save speed test | `POST /speed-tests` (optional auth) |
+| Private speed-test history | `GET /my/speed-tests` (authenticated) |
+| ISP speed-test aggregates | `GET /my/speed-tests/stats` (ISP) |
+| Speed-test moderation queue | `GET /admin/speed-tests` (admin) |
+| Moderate speed test | `PATCH /admin/speed-tests/:id` (admin) |
 
 ## User follows (customers, independent/company technicians, and ISPs)
 
@@ -93,6 +107,31 @@ Profile responses expose only `id`, `name`, `role`, `avatar_url`,
 Phone, email, employment, and job data are excluded. Slugs are derived once
 from the name, creation year, and UUID; later renames do not change the link.
 
+## Public coverage pages
+
+County, town, and estate pages give every covered area a shareable web page
+without requiring the app or a login. They are the public landing surface for
+search engines, WhatsApp status, and estate groups.
+
+| Action | Method and route | Notes |
+|---|---|---|
+| County page | `GET /places/:county` | HTML with OpenGraph metadata |
+| Town page | `GET /places/:county/:town` | HTML with OpenGraph metadata |
+| Estate page | `GET /places/:county/:town/:estate` | HTML with OpenGraph metadata |
+| Coverage JSON | `GET /public/coverage?county=&town=&estate=` | Same public data for clients |
+
+Pages list ISPs that publish serviceability for the area, match the ISP county,
+or have an explicit coverage location there. Packages show the effective county
+price when one exists and fall back to the base price otherwise. The page
+includes published serviceability, ratings, review counts, technician counts,
+and profile links.
+
+Area names tolerate case, spaces, and punctuation (`kiambu-road` and
+`Kiambu Road` are equivalent). Only public ISP, package, and coverage fields
+are returned. Customer names, phone numbers, waitlist entries, and browsing
+history are never included. View tracking stores only the page type, area key,
+referrer origin, and timestamp; IP addresses and user agents are not stored.
+
 ## Favorites and reactions
 
 Customers, technicians, and ISPs can maintain private favorite lists and react
@@ -131,9 +170,92 @@ final slot closes the vacancy. Employment remains the explicit
 Quotation finalization now creates a PDF immediately. Its document object
 contains `/documents/{id}/download` when generation succeeds.
 
+## Sponsored promotions
+
+Users can promote a billing-system listing, an ISP profile, or a technician
+profile. Each promotion belongs to the creating account, while managers of a
+billing system can also view and manage promotions for that system. Admin
+accounts can inspect and moderate every promotion.
+
+| Action | Method and route | Notes |
+|---|---|---|
+| Active placements | `GET /promotions?placement=directory&limit=10` | Public; returns active/scheduled-and-started placements only |
+| Record impression/click | `POST /promotions/:id/events` | Public; optional token attributes the viewer to aggregate insights |
+| Contact the owner | `POST /promotions/:id/enquiry` | Signed-in user; explicit `consent: true` is required |
+| My promotions | `GET /my/promotions?status=active&limit=20&offset=0` | Owner or billing-system manager |
+| Promotion detail | `GET /my/promotions/:id` | Owner or manager |
+| Create promotion | `POST /my/promotions` | Owner or manager |
+| Renew | `POST /my/promotions/:id/renew` | Creates a new pending-approval campaign; old statistics stay intact |
+| Cancel | `POST /my/promotions/:id/cancel` | Owner or manager |
+| Audience insights | `GET /my/promotions/:id/insights?from=YYYY-MM-DD&to=YYYY-MM-DD&placement=directory` | Aggregates only |
+| Payment history | `GET /my/promotions/:id/payments` | Owner or manager |
+| Enquiries | `GET /my/promotions/:id/enquiries` | Owner or manager; only visitors who chose to share details appear |
+| Admin promotion list | `GET /admin/promotions?status=pending_approval` | All promotions |
+| Admin promotion detail/insights/payments/enquiries | `GET /admin/promotions/:id[...]` | Same response shapes |
+| Approve submitted promotion | `POST /admin/promotions/:id/approve` | Makes it payable/visible according to payment and start date |
+| Reject submitted promotion | `POST /admin/promotions/:id/reject` | `{"reason":"..."}`; the owner sees `rejection_reason` |
+| Suspend, restore or cancel | `PATCH /admin/promotions/:id` | `{"status":"suspended|active|cancelled"}` |
+| Confirm external payment | `POST /admin/promotions/:id/payments/:payment_id/confirm` | `{"provider":"manual","reference":"..."}` |
+
+`POST /my/promotions` accepts:
+
+```json
+{
+  "listing_type": "billing_system",
+  "listing_id": "<uuid>",
+  "placement": "directory",
+  "destination_type": "internal",
+  "destination_url": "/billing-systems/example",
+  "starts_at": "2026-11-15T00:00:00Z",
+  "duration_days": 30,
+  "amount": 2500,
+  "currency": "KES"
+}
+```
+
+`listing_type` is `billing_system`, `isp`, or `technician`. For ISP and
+technician promotions, `listing_id` is the owning `users.id`. If
+`destination_type` is `internal`, the destination must be a path beginning with
+`/`; omit it to use the listing's public profile path. External destinations
+must be `http(s)` URLs. `expires_at` can be sent instead of `duration_days`.
+
+Statuses are `pending_approval`, `pending_payment`, `scheduled`, `active`,
+`expired`, `cancelled`, `suspended`, and `rejected`. Expiry is calculated from
+server time on every read, so the dashboard changes to `expired` automatically.
+`time_remaining` is human-readable (for example `3 days remaining` or
+`Expired 2 days ago`).
+
+A submitted promotion is private and **cannot appear on the customer side until
+an admin approves it**. The lifecycle is:
+
+1. Owner submits details with `POST /my/promotions`; status is
+   `pending_approval` and a pending payment row is created.
+2. Admin reviews the content. `approve` records approval; `reject` closes the
+   request with a reason. Rejected promotions never become public.
+3. If payment was already confirmed, approval makes the promotion `active` or
+   `scheduled` (depending on `starts_at`). Otherwise it becomes
+   `pending_payment` and stays hidden until an admin confirms the payment.
+4. Only `active`, or `scheduled` with `starts_at <= now()`, are returned by the
+   public placements endpoint.
+
+Promotion responses include impressions, unique viewers, clicks, unique
+clickers, click-through rate, payment status, expiry, and enquiry count.
+Insights add audience role, broad county, placement, and daily series. Raw IP
+addresses, user agents, names, phone numbers, and browsing histories are never
+stored in the event table. Anonymous viewers are represented by a salted hash.
+Bot-like user agents are ignored, impressions are deduplicated per
+viewer/placement for five minutes, and clicks per viewer/placement for one
+minute.
+
+**Sponsorship payment rail:** a new promotion creates a pending payment-history
+row immediately. No automatic card or STK capture is invented here. An admin
+reconciles an externally verified payment reference with the confirm endpoint.
+Approval and payment are separate gates: both are required before a promotion
+is public. Wire a verified provider contract before automating collection.
+
 ## Migrations
 
-Run migrations `0020` through `0036` before deploying the updated API:
+Run migrations `0020` through `0040` before deploying the updated API:
 
 ```bash
 go run ./cmd/migrate

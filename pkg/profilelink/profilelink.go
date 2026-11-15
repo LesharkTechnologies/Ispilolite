@@ -40,3 +40,13 @@ func (b *Builder) URL(profilePath string) string {
 	}
 	return b.base + profilePath
 }
+
+// Origin returns the configured public origin without a trailing slash. It is
+// used for non-profile share links such as public coverage pages, which must
+// also be stable even when the API is served from a different host.
+func (b *Builder) Origin() string {
+	if b == nil {
+		return ""
+	}
+	return b.base
+}

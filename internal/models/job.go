@@ -47,6 +47,14 @@ type JobRequest struct {
 	DeletedAt            *time.Time        `json:"deleted_at,omitempty" db:"deleted_at"`
 	WarrantyDays         int               `json:"warranty_days" db:"warranty_days"`
 	WarrantyExpiresAt    *time.Time        `json:"warranty_expires_at,omitempty" db:"warranty_expires_at"`
+	ResponseDueAt        *time.Time        `json:"response_due_at,omitempty" db:"response_due_at"`
+	QuoteDueAt           *time.Time        `json:"quote_due_at,omitempty" db:"quote_due_at"`
+	InstallationDueAt    *time.Time        `json:"installation_due_at,omitempty" db:"installation_due_at"`
+	ViewedAt             *time.Time        `json:"viewed_at,omitempty" db:"viewed_at"`
+	AcceptedAt           *time.Time        `json:"accepted_at,omitempty" db:"accepted_at"`
+	ScheduledAt          *time.Time        `json:"scheduled_at,omitempty" db:"scheduled_at"`
+	CompletedAt          *time.Time        `json:"completed_at,omitempty" db:"completed_at"`
+	LossReason           string            `json:"loss_reason,omitempty" db:"loss_reason"`
 }
 
 type WarrantyClaim struct {

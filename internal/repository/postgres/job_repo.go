@@ -30,11 +30,11 @@ func NewJobRequestRepo() (*JobRepository, error) {
 }
 
 const jobColumns = `id,customer_id,requester_role,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
-const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at,warranty_days,warranty_expires_at`
+const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at,warranty_days,warranty_expires_at,response_due_at,quote_due_at,installation_due_at,viewed_at,accepted_at,scheduled_at,completed_at,loss_reason`
 
 func scanJob(row interface{ Scan(...interface{}) error }) (*models.JobRequest, error) {
 	job := &models.JobRequest{}
-	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt, &job.WarrantyDays, &job.WarrantyExpiresAt)
+	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt, &job.WarrantyDays, &job.WarrantyExpiresAt, &job.ResponseDueAt, &job.QuoteDueAt, &job.InstallationDueAt, &job.ViewedAt, &job.AcceptedAt, &job.ScheduledAt, &job.CompletedAt, &job.LossReason)
 	return job, err
 }
 
@@ -192,12 +192,16 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		}
 		return nil
 	}
-	allowedFrom := map[string]string{"accepted": "open,assigned", "in_progress": "accepted", "completed": "in_progress"}[status]
+	allowedFrom := map[string]string{"accepted": "open,viewed,quoted,assigned", "in_progress": "accepted,scheduled", "completed": "in_progress"}[status]
 	if allowedFrom == "" {
 		return sql.ErrNoRows
 	}
-	result, err := r.writer.Exec(`UPDATE service_requests SET status=$1,is_available=false,updated_at=now()
-		WHERE id=$2 AND status=ANY(string_to_array($4,',')) AND (target_technician_id=$3 OR target_isp_id=$3 OR assigned_technician_id=$3 OR assigned_isp_id=$3) AND deleted_at IS NULL`, status, id, actor, allowedFrom)
+	completionGate := ""
+	if status == "completed" {
+		completionGate = " AND EXISTS(SELECT 1 FROM installation_proofs p WHERE p.request_id=service_requests.id AND p.customer_confirmed_at IS NOT NULL AND jsonb_array_length(p.photo_urls)>=1 AND p.device_serial<>'' AND p.checklist <> '{}'::jsonb)"
+	}
+	result, err := r.writer.Exec(`UPDATE service_requests SET status=$1,is_available=false,completed_at=CASE WHEN $1='completed' THEN now() ELSE completed_at END,updated_at=now()
+		WHERE id=$2 AND status=ANY(string_to_array($4,',')) AND (target_technician_id=$3 OR target_isp_id=$3 OR assigned_technician_id=$3 OR assigned_isp_id=$3) AND deleted_at IS NULL`+completionGate, status, id, actor, allowedFrom)
 	if err != nil {
 		return err
 	}
@@ -248,7 +252,7 @@ func (r *JobRepository) AssignTechnician(requestID, ispID, technicianID string) 
 	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users u JOIN isp_technicians it ON it.technician_id=u.id AND it.isp_id=$2 AND it.status='active' WHERE u.id=$1 AND u.role='technician' AND u.status='active' AND u.isp_id=$2)`, technicianID, ispID).Scan(&ok); err != nil || !ok {
 		return nil, sql.ErrNoRows
 	}
-	res, err := tx.Exec(`UPDATE service_requests SET assigned_isp_id=$1,assigned_technician_id=$2,status='assigned',is_available=false,updated_at=now()
+	res, err := tx.Exec(`UPDATE service_requests SET assigned_isp_id=$1,assigned_technician_id=$2,status='scheduled',is_available=false,updated_at=now()
 		WHERE id=$3 AND deleted_at IS NULL AND ((target_isp_id=$1 AND status IN ('open','accepted','assigned')) OR (assigned_isp_id=$1 AND status IN ('accepted','assigned')))`, ispID, technicianID, requestID)
 	if err != nil {
 		return nil, err

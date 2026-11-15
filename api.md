@@ -96,6 +96,41 @@ requests assigned to it, its own technician-work requests, and requests to
 which it applied. ISP installation views and updates now use the same
 `service_requests` records as customer creation routes.
 
+The installation pipeline exposes SLA timestamps on job records:
+`response_due_at`, `quote_due_at`, `installation_due_at`, `accepted_at`,
+`scheduled_at`, and `completed_at`. Quotation creation moves an eligible request
+to `quoted`; customer acceptance moves it to `accepted`; technician assignment
+moves it to `scheduled`.
+
+### Serviceability
+
+```http
+GET    /serviceability?county=Nairobi&town=Westlands&estate=...
+POST   /serviceability/waitlist
+GET    /my/serviceability
+POST   /my/serviceability
+DELETE /my/serviceability/:id
+GET    /my/serviceability/waitlist
+```
+
+ISPs maintain manual serviceability records with `serviceable`,
+`likely_serviceable`, `survey_required`, or `not_serviceable` status, technology,
+estimated installation days, and a reason. Customers can check an area before
+creating a request and join a waitlist when service is unavailable.
+
+### Installation proof
+
+```http
+POST /jobs/:id/installation-proof
+GET  /jobs/:id/installation-proof
+POST /jobs/:id/installation-confirm
+```
+
+Technicians submit check-in/out data, photos, a checklist, device serial, and
+test results. The customer confirms the proof. A job cannot transition to
+`completed` until at least one photo, a device serial, checklist data, and
+customer confirmation are present.
+
 ### Provider matches
 
 ```http
@@ -227,6 +262,178 @@ follower lists expose only public user fields. Follow is idempotent (201 new,
 and inactive/missing targets return 404. Company invitations through
 `POST /my/technicians` now create the company link so invited technicians
 appear in the ISP's `GET /my/technicians` list; independent technicians do not.
+
+## Public coverage pages
+
+Area pages are public, indexable, and safe to share on WhatsApp or social
+media. They use the same origin as `PROFILE_PUBLIC_BASE_URL` for canonical and
+share links.
+
+| Action | Method and route | Notes |
+|---|---|---|
+| County page | `GET /places/:county` | Server-rendered HTML, no auth |
+| Town page | `GET /places/:county/:town` | Server-rendered HTML, no auth |
+| Estate page | `GET /places/:county/:town/:estate` | Server-rendered HTML, no auth |
+| Coverage JSON | `GET /api/v1/public/coverage?county=nairobi&town=westlands` | Flutter/API clients, no auth |
+
+`county` is required. `town` and `estate` are optional and narrow the result.
+Area names are matched without regard to case, spaces, or punctuation, so
+`kiambu-road` and `Kiambu Road` resolve to the same page. The response contains
+only public ISP details: name, logo, description, rating, review count,
+published serviceability, technician count, public profile link, and active
+packages with their effective county price. It never includes customer,
+technician, or waitlist identities.
+
+```json
+{
+  "success": true,
+  "data": {
+    "page_type": "town",
+    "county": "Nairobi",
+    "town": "Westlands",
+    "title": "Internet providers in Westlands, Nairobi | Ispilo Lite",
+    "description": "Compare 2 internet providers and 8 packages in Westlands, Nairobi. See prices, speeds, ratings and coverage on Ispilo Lite.",
+    "canonical_url": "https://lite.ispilo.co.ke/places/nairobi/westlands",
+    "isp_count": 2,
+    "package_count": 8,
+    "from_price": 2500,
+    "isps": []
+  }
+}
+```
+
+The HTML page adds OpenGraph and Twitter metadata, a canonical URL, WhatsApp,
+Facebook, and X share links, package tables, and per-ISP profile links. Each
+view stores only the page type, area key, referrer origin, and timestamp in
+`coverage_page_views`; IP addresses and user agents are not stored.
+
+## Media uploads (Cloudinary signed uploads)
+
+The API does not receive image bytes. It issues a signed upload request scoped
+to the authenticated user's folder; the client uploads the file directly to
+Cloudinary from Flutter or browser JavaScript, then sends the returned
+`secure_url` in the existing `photo_urls`, `media_urls`, `attachments`, or
+similar fields.
+
+```http
+POST /api/v1/media/upload-signature
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "kind": "installation_proof",
+  "file_size": 1843200,
+  "content_type": "image/jpeg"
+}
+```
+
+`file_size` and `content_type` are optional checks. The response includes the
+Cloudinary endpoint and the exact multipart fields to submit with the file:
+
+```json
+{
+  "success": true,
+  "data": {
+    "kind": "installation_proof",
+    "cloud_name": "your-cloud-name",
+    "upload_url": "https://api.cloudinary.com/v1_1/your-cloud-name/image/upload",
+    "folder": "ispilolite/installation-proofs/550e8400-e29b-41d4-a716-446655440000",
+    "timestamp": 1770000000,
+    "expires_at": 1770000600,
+    "max_file_size": 15728640,
+    "allowed_formats": ["jpg", "jpeg", "png", "webp", "heic", "heif"],
+    "upload_params": {
+      "api_key": "your-public-api-key",
+      "allowed_formats": "jpg,jpeg,png,webp,heic,heif",
+      "folder": "ispilolite/installation-proofs/550e8400-e29b-41d4-a716-446655440000",
+      "signature": "cloudinary-signature",
+      "timestamp": "1770000000"
+    }
+  }
+}
+```
+
+Submit every `upload_params` entry as a multipart field, add the file as
+`file`, and POST to `upload_url`. The response is a standard Cloudinary upload
+object; store its `secure_url`, never a temporary local path.
+
+| `kind` | Allowed roles | Max file size | Cloudinary folder |
+|---|---|---|---|
+| `profile` | customer, technician, ISP, admin | 5 MB | `profiles/<user-id>` |
+| `installation_proof` | technician, ISP, admin | 15 MB | `installation-proofs/<user-id>` |
+| `portfolio` | technician, admin | 15 MB | `technician-portfolio/<user-id>` |
+| `promotion` | ISP, admin | 10 MB | `promotions/<user-id>` |
+| `isp_logo` | ISP, admin | 5 MB | `isp-logos/<user-id>` |
+| `review` | customer, admin | 5 MB | `reviews/<user-id>` |
+| `chat` | customer, technician, ISP, admin | 10 MB | `chat/<user-id>` |
+
+Only JPEG, PNG, WebP, HEIC, and HEIF images are accepted. The folder is chosen
+by the server from `kind` and the authenticated user ID; clients cannot pick
+an arbitrary folder. `expires_at` is ten minutes after signing; it is advisory,
+so the client should upload promptly. The API secret is never returned. The
+upload endpoint returns `503` until `CLOUDINARY_CLOUD_NAME`,
+`CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` are configured.
+
+## Speed-test history and ISP attribution
+
+The speed-test flow lets a user select a registered ISP suggested for their
+county/town or type an ISP name that is not registered. A typed name is stored
+as user-reported text and never automatically creates or impersonates a
+registered ISP.
+
+| Action | Method and route | Access |
+|---|---|---|
+| ISP suggestions | `GET /api/v1/speed-tests/isps?county=Machakos&town=Machakos%20Town` | Public |
+| Save result | `POST /api/v1/speed-tests` | Optional login |
+| My history | `GET /api/v1/my/speed-tests?limit=50` | Authenticated user |
+| ISP dashboard stats | `GET /api/v1/my/speed-tests/stats?county=&town=` | ISP only |
+| Moderation queue | `GET /api/v1/admin/speed-tests?status=pending` | Admin only |
+| Moderate result | `PATCH /api/v1/admin/speed-tests/{id}` | Admin only |
+
+Results are private to the submitting user by default. New submissions start
+as `pending`; only moderated `accepted` tests should be used for official public
+statistics. `include_in_public_stats` defaults to `false`, so a user can save a
+private result without affecting public rankings.
+
+Every submission captures the trusted client IP resolved using
+`TRUSTED_PROXIES`. The raw IP is retained in the restricted speed-test table
+for abuse investigation and moderation; it is never returned in user history,
+ISP dashboard results, public statistics, or rankings. ISP dashboards receive
+aggregate counts and accepted-test averages for tests attributed to their
+registered ISP, without customer identity or IP addresses.
+
+Example submission:
+
+```json
+{
+  "test_session_id": "8f01d22b-5c7f-4f8d-a9f1-9124d6e1c821",
+  "download_mbps": 87.42,
+  "upload_mbps": 42.18,
+  "latency_ms": 12.5,
+  "jitter_ms": 3.2,
+  "isp_id": null,
+  "isp_name": "HomeNet",
+  "isp_plan_speed_mbps": 100,
+  "county": "Machakos",
+  "town": "Machakos Town",
+  "include_in_public_stats": false
+}
+```
+
+Migration `0041_speed_test_history.sql` must be applied before deploying the
+speed-test API.
+
+Admin moderation uses:
+
+```json
+{ "status": "accepted", "reason": "measurement is plausible" }
+```
+
+Allowed decisions are `accepted`, `rejected`, and `suspicious`. The moderation
+queue is the only API response that includes the captured IP address, and it is
+restricted to administrators.
 
 # Part 1: Admin API
 

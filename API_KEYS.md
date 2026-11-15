@@ -197,6 +197,11 @@ Local placeholders in `config/config.local.yaml`:
 |---|---|---|---|---|
 | `ADMIN_ALERT_PHONES` | Comma-separated admin SMS numbers | — | no | ❌ |
 | `NOTIFICATION_WEBHOOK_URL` | Push webhook for notification worker | — | worker: yes | ❌ |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud used for media uploads | — | uploads only | ✅ |
+| `CLOUDINARY_API_KEY` | Public Cloudinary API key returned in upload params | — | uploads only | ✅ |
+| `CLOUDINARY_API_SECRET` | Signs Cloudinary upload params | — | uploads only | ❌ |
+| `CLOUDINARY_FOLDER_PREFIX` | Public folder prefix for uploaded media | `ispilolite` | no | ✅ |
+| `CLOUDINARY_ALLOWED_HOSTS` | Extra Cloudinary delivery hostnames accepted in `*_urls` | `res.cloudinary.com` | no | ✅ |
 | `DOCUMENT_STORAGE_ROOT` | Quotation PDF storage root | — | no | ❌ |
 | `AUDIT_ARCHIVE_ROOT` | Audit export archive root | `storage/audit` | no | ❌ |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP tracing endpoint | — | no | ❌ |
@@ -244,6 +249,13 @@ TALKSASA_SENDER_ID=TALKSASA
 # --- Queue ---
 RABBITMQ_URL=amqp://ispilo:pass@rabbitmq-host:5672/
 RABBITMQ_REQUIRED=true
+
+# --- Media storage (Cloudinary signed uploads) ---
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-public-api-key
+CLOUDINARY_API_SECRET=your-server-only-api-secret
+CLOUDINARY_FOLDER_PREFIX=ispilolite
+CLOUDINARY_ALLOWED_HOSTS=res.cloudinary.com
 
 # --- Misc ---
 ADMIN_ALERT_PHONES=+254712345678
