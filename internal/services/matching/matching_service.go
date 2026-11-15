@@ -9,12 +9,12 @@ import (
 )
 
 type Request struct {
-	ID, CustomerID, LocationID, ServiceType, Description, Status string
-	Budget                                                       float64
-	PreferredDate                                                *time.Time
-	Requirements                                                 map[string]interface{}
-	Attachments                                                  []Attachment
-	CreatedAt, UpdatedAt                                         time.Time
+	ID, CustomerID, LocationID, County, ServiceType, Description, Status string
+	Budget                                                               float64
+	PreferredDate                                                        *time.Time
+	Requirements                                                         map[string]interface{}
+	Attachments                                                          []Attachment
+	CreatedAt, UpdatedAt                                                 time.Time
 }
 type Attachment struct{ Type, URL string }
 type Quotation struct {
@@ -47,6 +47,7 @@ type ExpiryRepository interface {
 type MatchActionRepository interface {
 	Respond(context.Context, string, string) error
 	Decline(context.Context, string, string) error
+	ListForProvider(context.Context, string, string, int) ([]Match, error)
 }
 type Notifier interface {
 	Notify(context.Context, string, string, map[string]interface{}) error
@@ -57,8 +58,18 @@ type MatchOptions struct {
 	AvailabilityRequired bool
 }
 type Match struct {
-	ProviderID, ProviderType, Name                string
-	Rating, DistanceKM, PriceEstimate, MatchScore float64
+	ID            string     `json:"id"`
+	RequestID     string     `json:"request_id"`
+	ProviderID    string     `json:"provider_id"`
+	ProviderType  string     `json:"provider_type"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	Rating        float64    `json:"rating"`
+	DistanceKM    float64    `json:"distance_km"`
+	PriceEstimate float64    `json:"price_estimate"`
+	MatchScore    float64    `json:"match_score"`
+	NotifiedAt    *time.Time `json:"notified_at,omitempty"`
+	ShouldNotify  bool       `json:"-"`
 }
 type MatchingService struct {
 	repo     Repository
@@ -76,7 +87,7 @@ func (s *MatchingService) CreateRequest(ctx context.Context, r *Request) (*Reque
 		r.ID = uuid.NewString()
 	}
 	if r.Status == "" {
-		r.Status = "pending"
+		r.Status = "open"
 	}
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = time.Now().UTC()
@@ -115,16 +126,41 @@ func (s *MatchingService) MatchProviders(ctx context.Context, id string, o Match
 	if e != nil {
 		return nil, e
 	}
+	if r.Status != "open" {
+		return nil, fmt.Errorf("request is not open for matching")
+	}
 	m, e := s.repo.FindMatches(ctx, r, o)
 	if e != nil {
 		return nil, fmt.Errorf("match providers: %w", e)
 	}
 	for _, match := range m {
-		if s.notifier != nil {
-			_ = s.notifier.Notify(ctx, match.ProviderID, "service_request.matched", map[string]interface{}{"request_id": id, "score": match.MatchScore})
+		if s.notifier != nil && match.ShouldNotify {
+			_ = s.notifier.Notify(ctx, match.ProviderID, "service_request.matched", map[string]interface{}{"request_id": id, "match_id": match.ID, "score": match.MatchScore})
 		}
 	}
 	return m, nil
+}
+
+func (s *MatchingService) MatchProvidersForCustomer(ctx context.Context, id, customerID string, o MatchOptions) ([]Match, error) {
+	request, err := s.GetRequest(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if request.CustomerID != customerID {
+		return nil, fmt.Errorf("request not found")
+	}
+	return s.MatchProviders(ctx, id, o)
+}
+
+func (s *MatchingService) ListForProvider(ctx context.Context, providerID, status string, limit int) ([]Match, error) {
+	repo, ok := s.repo.(MatchActionRepository)
+	if !ok {
+		return nil, fmt.Errorf("match actions are not configured")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	return repo.ListForProvider(ctx, providerID, strings.TrimSpace(status), limit)
 }
 
 func (s *MatchingService) StartExpiryWorker(ctx context.Context, interval, expiry time.Duration) {

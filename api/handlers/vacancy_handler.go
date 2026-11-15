@@ -75,3 +75,52 @@ func (h *VacancyHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Message: "application submitted"})
 }
+
+func (h *VacancyHandler) Applications(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/my/vacancies/")
+	items, err := h.repo.Applications(userIDFromContext(r.Context()), id)
+	if err != nil {
+		respondWithError(w, 404, "vacancy not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: items})
+}
+
+func vacancyApplicationIDs(path string) (string, string) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/v1/my/vacancies/"), "/"), "/")
+	if len(parts) != 3 || parts[1] != "applications" {
+		return "", ""
+	}
+	return parts[0], parts[2]
+}
+
+func (h *VacancyHandler) Decide(w http.ResponseWriter, r *http.Request) {
+	vacancyID, applicationID := vacancyApplicationIDs(r.URL.Path)
+	var input struct {
+		Status string `json:"status"`
+	}
+	if decodeJSON(w, r, &input) != nil {
+		respondWithError(w, 400, "invalid decision")
+		return
+	}
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if input.Status != "accepted" && input.Status != "rejected" {
+		respondWithError(w, 400, "status must be accepted or rejected")
+		return
+	}
+	if err := h.repo.Decide(userIDFromContext(r.Context()), vacancyID, applicationID, input.Status); err != nil {
+		respondWithError(w, 404, "pending application not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "application " + input.Status})
+}
+
+func (h *VacancyHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/vacancies/")
+	id = strings.TrimSuffix(id, "/application")
+	if err := h.repo.Withdraw(id, userIDFromContext(r.Context())); err != nil {
+		respondWithError(w, 404, "pending application not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "application withdrawn"})
+}

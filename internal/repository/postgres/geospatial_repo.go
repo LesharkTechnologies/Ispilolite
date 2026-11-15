@@ -3,6 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"strings"
+
+	"github.com/lib/pq"
 
 	"ispilolite/internal/models"
 	"ispilolite/pkg/database"
@@ -36,7 +39,18 @@ func (r *GeospatialRepository) NearbyISPs(ctx context.Context, lat, lon, radius 
 }
 
 func (r *GeospatialRepository) NearbyTechnicians(ctx context.Context, lat, lon, radius float64, skills []string) ([]*models.Technician, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT u.id,u.id,u.name,COALESCE(u.phone,''),COALESCE(u.email,''),COALESCE(u.isp_id::text,''),COALESCE(u.rating,0),COALESCE(u.total_ratings,0),COALESCE(u.county,'') FROM users u WHERE u.role='technician' AND u.status='active' ORDER BY u.rating DESC LIMIT 100`)
+	for i := range skills {
+		skills[i] = strings.ToLower(strings.TrimSpace(skills[i]))
+	}
+	rows, err := r.db.QueryContext(ctx, `WITH nearby AS (
+		SELECT u.id,u.name,COALESCE(u.isp_id::text,'') isp_id,COALESCE(u.rating,0) rating,
+		COALESCE(u.total_ratings,0) reviews,COALESCE(u.county,'') county,u.latitude,u.longitude,
+		6371*2*asin(sqrt(power(sin(radians(u.latitude-$1)/2),2)+cos(radians($1))*cos(radians(u.latitude))*power(sin(radians(u.longitude-$2)/2),2))) distance_km
+		FROM users u WHERE u.role='technician' AND u.status='active' AND u.latitude IS NOT NULL AND u.longitude IS NOT NULL)
+		SELECT n.id,n.id,n.name,'','',n.isp_id,n.rating,n.reviews,n.county,n.latitude,n.longitude,n.distance_km
+		FROM nearby n WHERE n.distance_km<=$3 AND (cardinality($4::text[])=0 OR EXISTS(
+			SELECT 1 FROM technician_profile_skills s WHERE s.technician_id=n.id AND lower(s.skill)=ANY($4::text[])))
+		ORDER BY n.distance_km,n.rating DESC LIMIT 100`, lat, lon, radius, pq.Array(skills))
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +58,11 @@ func (r *GeospatialRepository) NearbyTechnicians(ctx context.Context, lat, lon, 
 	out := []*models.Technician{}
 	for rows.Next() {
 		v := &models.Technician{}
-		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &v.Phone, &v.Email, &v.ISPID, &v.Rating, &v.ReviewCount, &v.County); err != nil {
+		var techLat, techLon float64
+		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &v.Phone, &v.Email, &v.ISPID, &v.Rating, &v.ReviewCount, &v.County, &techLat, &techLon, &v.Distance); err != nil {
 			return nil, err
 		}
+		v.Location = &models.GeoPoint{Lat: techLat, Lon: techLon}
 		out = append(out, v)
 	}
 	return out, rows.Err()

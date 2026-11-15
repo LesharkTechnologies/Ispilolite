@@ -53,6 +53,12 @@ func (r *JobRepository) ListForCustomer(id, status string) ([]*models.JobRequest
 func (r *JobRepository) ListForTechnician(id, status string) ([]*models.JobRequest, error) {
 	return r.list(`(target_technician_id=$1 OR assigned_technician_id=$1 OR EXISTS (SELECT 1 FROM service_request_applications a WHERE a.request_id=service_requests.id AND a.applicant_id=$1)) AND ($2='' OR status=$2)`, id, status)
 }
+func (r *JobRepository) ListForISP(id, status string) ([]*models.JobRequest, error) {
+	return r.list(`(target_isp_id=$1 OR assigned_isp_id=$1 OR (customer_id=$1 AND requester_role='isp') OR EXISTS (SELECT 1 FROM service_request_applications a WHERE a.request_id=service_requests.id AND a.applicant_id=$1)) AND ($2='' OR status=$2)`, id, status)
+}
+func (r *JobRepository) GetForParticipant(requestID, participantID string) (*models.JobRequest, error) {
+	return scanJob(r.reader.QueryRow(`SELECT `+jobSelectColumns+` FROM service_requests WHERE id=$1 AND deleted_at IS NULL AND (customer_id=$2 OR target_isp_id=$2 OR assigned_isp_id=$2 OR target_technician_id=$2 OR assigned_technician_id=$2)`, requestID, participantID))
+}
 func (r *JobRepository) ListAvailable(county, town, serviceType string) ([]*models.JobRequest, error) {
 	return r.list(`mode='broadcast' AND is_available=true AND status='open' AND ($1='' OR lower(county)=lower($1)) AND ($2='' OR lower(town)=lower($2)) AND ($3='' OR service_type=$3)`, county, town, serviceType)
 }
@@ -126,6 +132,14 @@ func (r *JobRepository) AssignApplication(requestID, customerID, applicationID s
 	if _, err = tx.Exec(`UPDATE service_request_applications SET status=CASE WHEN id=$1 THEN 'accepted' ELSE 'rejected' END,updated_at=now() WHERE request_id=$2`, applicationID, requestID); err != nil {
 		return nil, err
 	}
+	_, _ = tx.Exec(`UPDATE matches SET status=CASE WHEN provider_id=$1 THEN 'assigned' ELSE 'declined' END,responded_at=now() WHERE request_id=$2 AND status IN ('notified','seen')`, applicant, requestID)
+	if role == "technician" {
+		if _, err = tx.Exec(`INSERT INTO work_engagements(id,customer_id,isp_id,technician_id,request_id,status)
+			SELECT gen_random_uuid(),customer_id,(SELECT isp_id FROM users WHERE id=$1),$1,id,'active' FROM service_requests WHERE id=$2
+			AND NOT EXISTS(SELECT 1 FROM work_engagements WHERE request_id=$2 AND technician_id=$1 AND status='active')`, applicant, requestID); err != nil {
+			return nil, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -162,10 +176,10 @@ func (r *JobRepository) DeleteJobRequest(id, customerID string) error {
 }
 func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 	if status == "rejected" {
-		result, err := r.writer.Exec(`UPDATE service_requests SET status='open',is_available=true,
+		result, err := r.writer.Exec(`UPDATE service_requests SET status=CASE WHEN mode='broadcast' THEN 'open' ELSE 'cancelled' END,is_available=(mode='broadcast'),
 			assigned_technician_id=CASE WHEN assigned_technician_id=$1 THEN NULL ELSE assigned_technician_id END,
 			assigned_isp_id=CASE WHEN assigned_isp_id=$1 THEN NULL ELSE assigned_isp_id END,updated_at=now()
-			WHERE id=$2 AND (target_technician_id=$1 OR target_isp_id=$1 OR assigned_technician_id=$1 OR assigned_isp_id=$1) AND deleted_at IS NULL`, actor, id)
+			WHERE id=$2 AND status IN ('open','assigned') AND (target_technician_id=$1 OR target_isp_id=$1 OR assigned_technician_id=$1 OR assigned_isp_id=$1) AND deleted_at IS NULL`, actor, id)
 		if err != nil {
 			return err
 		}
@@ -178,7 +192,12 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		}
 		return nil
 	}
-	result, err := r.writer.Exec(`UPDATE service_requests SET status=$1,is_available=CASE WHEN $1 IN ('assigned','accepted','in_progress','completed','cancelled') THEN false ELSE is_available END,updated_at=now() WHERE id=$2 AND (customer_id=$3 OR target_technician_id=$3 OR target_isp_id=$3 OR assigned_technician_id=$3 OR assigned_isp_id=$3) AND deleted_at IS NULL`, status, id, actor)
+	allowedFrom := map[string]string{"accepted": "open,assigned", "in_progress": "accepted", "completed": "in_progress"}[status]
+	if allowedFrom == "" {
+		return sql.ErrNoRows
+	}
+	result, err := r.writer.Exec(`UPDATE service_requests SET status=$1,is_available=false,updated_at=now()
+		WHERE id=$2 AND status=ANY(string_to_array($4,',')) AND (target_technician_id=$3 OR target_isp_id=$3 OR assigned_technician_id=$3 OR assigned_isp_id=$3) AND deleted_at IS NULL`, status, id, actor, allowedFrom)
 	if err != nil {
 		return err
 	}
@@ -188,6 +207,16 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 	}
 	if affected == 0 {
 		return sql.ErrNoRows
+	}
+	if status == "accepted" {
+		_, _ = r.writer.Exec(`INSERT INTO work_engagements(id,customer_id,isp_id,technician_id,request_id,status)
+			SELECT gen_random_uuid(),customer_id,COALESCE(assigned_isp_id,target_isp_id),COALESCE(assigned_technician_id,target_technician_id),id,'active'
+			FROM service_requests WHERE id=$1 AND COALESCE(assigned_technician_id,target_technician_id) IS NOT NULL
+			AND NOT EXISTS(SELECT 1 FROM work_engagements WHERE request_id=$1 AND technician_id=COALESCE(service_requests.assigned_technician_id,service_requests.target_technician_id) AND status='active')`, id)
+	}
+	if status == "completed" {
+		_, _ = r.writer.Exec(`UPDATE technicians SET jobs_done=jobs_done+1,updated_at=now() WHERE user_id=(SELECT assigned_technician_id FROM service_requests WHERE id=$1)`, id)
+		_, _ = r.writer.Exec(`UPDATE work_engagements SET status='completed',ended_at=now() WHERE request_id=$1 AND status='active'`, id)
 	}
 	return nil
 }
@@ -216,16 +245,23 @@ func (r *JobRepository) AssignTechnician(requestID, ispID, technicianID string) 
 	}
 	defer tx.Rollback()
 	var ok bool
-	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='technician' AND status='active' AND isp_id=$2)`, technicianID, ispID).Scan(&ok); err != nil || !ok {
+	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users u JOIN isp_technicians it ON it.technician_id=u.id AND it.isp_id=$2 AND it.status='active' WHERE u.id=$1 AND u.role='technician' AND u.status='active' AND u.isp_id=$2)`, technicianID, ispID).Scan(&ok); err != nil || !ok {
 		return nil, sql.ErrNoRows
 	}
-	res, err := tx.Exec(`UPDATE service_requests SET assigned_isp_id=$1,assigned_technician_id=$2,status='assigned',is_available=false,updated_at=now() WHERE id=$3 AND (target_isp_id=$1 OR requester_role='customer') AND deleted_at IS NULL AND is_available=true`, ispID, technicianID, requestID)
+	res, err := tx.Exec(`UPDATE service_requests SET assigned_isp_id=$1,assigned_technician_id=$2,status='assigned',is_available=false,updated_at=now()
+		WHERE id=$3 AND deleted_at IS NULL AND ((target_isp_id=$1 AND status IN ('open','accepted','assigned')) OR (assigned_isp_id=$1 AND status IN ('accepted','assigned')))`, ispID, technicianID, requestID)
 	if err != nil {
 		return nil, err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return nil, sql.ErrNoRows
+	}
+	_, err = tx.Exec(`INSERT INTO work_engagements(id,customer_id,isp_id,technician_id,request_id,status)
+		SELECT gen_random_uuid(),customer_id,$1,$2,id,'active' FROM service_requests WHERE id=$3
+		AND NOT EXISTS(SELECT 1 FROM work_engagements WHERE request_id=$3 AND technician_id=$2 AND status='active')`, ispID, technicianID, requestID)
+	if err != nil {
+		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
@@ -242,5 +278,6 @@ func (r *JobRepository) TerminateJob(requestID, actorID, reason string, endedAt 
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	_, _ = r.writer.Exec(`UPDATE work_engagements SET status='terminated',ended_at=$2,termination_reason=$3 WHERE request_id=$1 AND status='active'`, requestID, endedAt, reason)
 	return nil
 }

@@ -18,6 +18,8 @@ type Review struct {
 	IsVerified     bool      `json:"is_verified" db:"is_verified"`
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
+	LikeCount      int       `json:"like_count" db:"like_count"`
+	HelpfulCount   int       `json:"helpful_count" db:"helpful_count"`
 }
 type ReviewReport struct {
 	ID         string    `json:"id"`

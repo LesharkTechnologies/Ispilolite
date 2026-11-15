@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -29,7 +31,7 @@ func (r *MatchingRepository) CreateRequest(ctx context.Context, req *matching.Re
 func (r *MatchingRepository) GetRequest(ctx context.Context, id string) (*matching.Request, error) {
 	request := &matching.Request{}
 	var preferred sql.NullTime
-	err := r.db.QueryRowContext(ctx, `SELECT id,customer_id,COALESCE(location_id::text,''),service_type,description,status,budget,preferred_date,created_at,updated_at FROM service_requests WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&request.ID, &request.CustomerID, &request.LocationID, &request.ServiceType, &request.Description, &request.Status, &request.Budget, &preferred, &request.CreatedAt, &request.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT id,customer_id,COALESCE(location_id::text,''),county,service_type,description,status,budget,preferred_date,created_at,updated_at FROM service_requests WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&request.ID, &request.CustomerID, &request.LocationID, &request.County, &request.ServiceType, &request.Description, &request.Status, &request.Budget, &preferred, &request.CreatedAt, &request.UpdatedAt)
 	if preferred.Valid {
 		request.PreferredDate = &preferred.Time
 	}
@@ -82,7 +84,10 @@ func (r *MatchingRepository) FindMatches(ctx context.Context, req *matching.Requ
 	if opts.RadiusKM > 100 {
 		opts.RadiusKM = 100
 	}
-	rows, err := r.db.QueryContext(ctx, `WITH weights AS (SELECT distance_weight,rating_weight,activity_weight,coverage_weight,availability_weight FROM matching_weights WHERE id=true), request_location AS (SELECT l.latitude,l.longitude,l.county FROM locations l WHERE l.id=NULLIF($2,'')::uuid), candidates AS (SELECT u.id,u.role,u.name,COALESCE(u.rating,0) rating,CASE WHEN rl.latitude IS NOT NULL AND u.latitude IS NOT NULL THEN 6371*2*asin(sqrt(power(sin(radians(u.latitude-rl.latitude)/2),2)+cos(radians(rl.latitude))*cos(radians(u.latitude))*power(sin(radians(u.longitude-rl.longitude)/2),2))) ELSE 0 END distance_km,CASE WHEN EXISTS(SELECT 1 FROM isp_coverage_locations c WHERE c.isp_id=u.id AND c.location_id=NULLIF($2,'')::uuid) THEN 1 ELSE 0 END exact_coverage,CASE WHEN u.role='technician' THEN COALESCE(tp.is_available,false)::int ELSE 1 END available,CASE WHEN EXISTS(SELECT 1 FROM service_requests sr WHERE (sr.assigned_isp_id=u.id OR sr.assigned_technician_id=u.id) AND sr.status='completed' AND sr.updated_at>now()-interval '90 days') THEN 1 ELSE .5 END activity FROM users u CROSS JOIN request_location rl LEFT JOIN technician_profiles tp ON tp.technician_id=u.id WHERE u.status='active' AND u.role IN ('isp','technician') AND u.id<>$1), ranked AS (SELECT c.*,GREATEST(0,LEAST(1,w.distance_weight*(1-LEAST(c.distance_km/$3,1))+w.rating_weight*(c.rating/5)+w.activity_weight*c.activity+w.coverage_weight*c.exact_coverage+w.availability_weight*c.available)) score FROM candidates c CROSS JOIN weights w WHERE ($4=false OR c.available=1) AND ($5=0 OR c.rating >= $5) AND c.distance_km <= $3) SELECT id,role,name,rating,distance_km,score FROM ranked ORDER BY score DESC LIMIT 10`, req.CustomerID, req.LocationID, opts.RadiusKM, opts.AvailabilityRequired, opts.MinRating)
+	rows, err := r.db.QueryContext(ctx, `WITH weights AS (SELECT distance_weight,rating_weight,activity_weight,coverage_weight,availability_weight FROM matching_weights WHERE id=true), request_location AS (
+		SELECT l.latitude,l.longitude,l.county FROM locations l WHERE l.id=NULLIF($2,'')::uuid
+		UNION ALL SELECT NULL::double precision,NULL::double precision,$6::text WHERE NOT EXISTS(SELECT 1 FROM locations WHERE id=NULLIF($2,'')::uuid)
+	), candidates AS (SELECT u.id,u.role,u.name,COALESCE(u.rating,0) rating,CASE WHEN rl.latitude IS NOT NULL AND u.latitude IS NOT NULL THEN 6371*2*asin(sqrt(power(sin(radians(u.latitude-rl.latitude)/2),2)+cos(radians(rl.latitude))*cos(radians(u.latitude))*power(sin(radians(u.longitude-rl.longitude)/2),2))) ELSE 0 END distance_km,CASE WHEN EXISTS(SELECT 1 FROM isp_coverage_locations c WHERE c.isp_id=u.id AND c.location_id=NULLIF($2,'')::uuid) THEN 1 ELSE 0 END exact_coverage,CASE WHEN u.role='technician' THEN COALESCE(tp.is_available,false)::int ELSE 1 END available,CASE WHEN EXISTS(SELECT 1 FROM service_requests sr WHERE (sr.assigned_isp_id=u.id OR sr.assigned_technician_id=u.id) AND sr.status='completed' AND sr.updated_at>now()-interval '90 days') THEN 1 ELSE .5 END activity FROM users u CROSS JOIN request_location rl LEFT JOIN technician_profiles tp ON tp.technician_id=u.id WHERE u.status='active' AND u.role IN ('isp','technician') AND u.id<>$1 AND (rl.latitude IS NOT NULL OR ($6<>'' AND lower(u.county)=lower($6)))), ranked AS (SELECT c.*,GREATEST(0,LEAST(1,w.distance_weight*(1-LEAST(c.distance_km/$3,1))+w.rating_weight*(c.rating/5)+w.activity_weight*c.activity+w.coverage_weight*c.exact_coverage+w.availability_weight*c.available)) score FROM candidates c CROSS JOIN weights w WHERE ($4=false OR c.available=1) AND ($5=0 OR c.rating >= $5) AND c.distance_km <= $3) SELECT id,role,name,rating,distance_km,score FROM ranked ORDER BY score DESC LIMIT 10`, req.CustomerID, req.LocationID, opts.RadiusKM, opts.AvailabilityRequired, opts.MinRating, req.County)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +98,9 @@ func (r *MatchingRepository) FindMatches(ctx context.Context, req *matching.Requ
 		if err := rows.Scan(&m.ProviderID, &m.ProviderType, &m.Name, &m.Rating, &m.DistanceKM, &m.MatchScore); err != nil {
 			return nil, err
 		}
+		m.ID = uuid.NewString()
+		m.RequestID = req.ID
+		m.Status = "notified"
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -103,16 +111,19 @@ func (r *MatchingRepository) FindMatches(ctx context.Context, req *matching.Requ
 		return nil, err
 	}
 	defer tx.Rollback()
-	for _, m := range out {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO matches(id,request_id,provider_id,provider_type,rating,distance_km,price_estimate,match_score,status,notified_at) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,'notified',now()) ON CONFLICT(request_id,provider_id) DO UPDATE SET rating=EXCLUDED.rating,distance_km=EXCLUDED.distance_km,price_estimate=EXCLUDED.price_estimate,match_score=EXCLUDED.match_score,status='notified',notified_at=now()`, req.ID, m.ProviderID, m.ProviderType, m.Rating, m.DistanceKM, m.PriceEstimate, m.MatchScore); err != nil {
+	for i := range out {
+		m := &out[i]
+		var notified time.Time
+		var previous string
+		err = tx.QueryRowContext(ctx, `SELECT status FROM matches WHERE request_id=$1 AND provider_id=$2`, req.ID, m.ProviderID).Scan(&previous)
+		m.ShouldNotify = errors.Is(err, sql.ErrNoRows) || previous == "declined" || previous == "expired"
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-	}
-	if len(out) > 0 {
-		_, err = tx.ExecContext(ctx, `UPDATE service_requests SET status='open',updated_at=now() WHERE id=$1`, req.ID)
-	}
-	if err != nil {
-		return nil, err
+		if err = tx.QueryRowContext(ctx, `INSERT INTO matches(id,request_id,provider_id,provider_type,rating,distance_km,price_estimate,match_score,status,notified_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'notified',now()) ON CONFLICT(request_id,provider_id) DO UPDATE SET rating=EXCLUDED.rating,distance_km=EXCLUDED.distance_km,price_estimate=EXCLUDED.price_estimate,match_score=EXCLUDED.match_score,status=CASE WHEN matches.status IN ('declined','expired') THEN 'notified' ELSE matches.status END,notified_at=CASE WHEN matches.status IN ('declined','expired') THEN now() ELSE matches.notified_at END RETURNING id,status,notified_at`, m.ID, req.ID, m.ProviderID, m.ProviderType, m.Rating, m.DistanceKM, m.PriceEstimate, m.MatchScore).Scan(&m.ID, &m.Status, &notified); err != nil {
+			return nil, err
+		}
+		m.NotifiedAt = &notified
 	}
 	return out, tx.Commit()
 }
@@ -153,4 +164,29 @@ func (r *MatchingRepository) Decline(ctx context.Context, matchID, providerID st
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (r *MatchingRepository) ListForProvider(ctx context.Context, providerID, status string, limit int) ([]matching.Match, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT m.id,m.request_id,m.provider_id,m.provider_type,u.name,m.status,m.rating,m.distance_km,m.price_estimate,m.match_score,m.notified_at
+		FROM matches m JOIN users u ON u.id=m.provider_id
+		WHERE m.provider_id=$1 AND ($2='' OR m.status=$2)
+		ORDER BY m.notified_at DESC LIMIT $3`, providerID, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]matching.Match, 0)
+	for rows.Next() {
+		var item matching.Match
+		var notified sql.NullTime
+		if err := rows.Scan(&item.ID, &item.RequestID, &item.ProviderID, &item.ProviderType, &item.Name, &item.Status, &item.Rating, &item.DistanceKM, &item.PriceEstimate, &item.MatchScore, &notified); err != nil {
+			return nil, err
+		}
+		if notified.Valid {
+			value := notified.Time
+			item.NotifiedAt = &value
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }

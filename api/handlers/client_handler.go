@@ -54,7 +54,7 @@ func (h *ClientHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 404, "user not found")
 		return
 	}
-	respondWithJSON(w, 200, u)
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: u})
 }
 func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	var req dto.UpdateProfileRequest
@@ -73,6 +73,9 @@ func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Email) != "" {
 		u.Email = strings.TrimSpace(req.Email)
 	}
+	if strings.TrimSpace(req.AvatarURL) != "" {
+		u.AvatarURL = strings.TrimSpace(req.AvatarURL)
+	}
 	if req.Location != nil {
 		u.Location = &models.Coordinates{Lat: req.Location.Lat, Lng: req.Location.Lng}
 	}
@@ -83,7 +86,7 @@ func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to update profile")
 		return
 	}
-	respondWithJSON(w, 200, u)
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: u})
 }
 func (h *ClientHandler) RequestDeleteProfile(w http.ResponseWriter, r *http.Request) {
 	if err := h.users.RequestDeleteUser(userIDFromContext(r.Context()), "deletion_requested"); err != nil {

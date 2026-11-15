@@ -25,9 +25,9 @@ This file tracks the implementation against the modular-monolith and matching/ge
 | Candidate ranking weights | Implemented | Migration `0016_matching.sql` stores weights and the PostgreSQL adapter applies them to candidate scores. |
 | Persisted matches and notified timestamps | Implemented | `matches` table and `MatchingRepository.FindMatches` upsert ranked rows. |
 | Provider notification events | Implemented | Match results call the reusable notification service, which persists in-app events and publishes to SSE subscribers. |
-| Assign provider / chat opening | Partial | ISP technician-work requests and customer-request technician assignment are wired; chat opening remains pending. |
+| Assign provider / chat opening | Implemented | Assignment, participant-authorized persisted job chat, message listing, and read receipts are wired. |
 | Re-match and stale-match worker | Partial | `StartExpiryWorker` expires stale matches and is started by `cmd/matching`; radius expansion/re-match retry remains pending. |
-| Matching HTTP routes | Implemented for match actions | Match list, provider respond, provider decline, ISP technician-work request, and technician assignment routes are wired; chat route remains pending. |
+| Matching HTTP routes | Implemented | Customer-owned matching, provider match inbox, respond/decline, ISP work queue, technician assignment, and job chat are wired. |
 
 ## Geospatial Service
 
@@ -61,16 +61,16 @@ collision. Explicit-output builds for all three commands pass.
 
 ## Next Implementation Order
 
-1. Add provider assignment/respond/decline matching routes and chat opening.
-2. Add radius-expanding re-match retry after stale match expiry.
-3. Normalize technician location/coverage queries for precise geospatial ranking.
+1. Add radius-expanding re-match retry after stale match expiry.
+2. Add a dedicated work-engagement history API.
+3. Integrate an approved payout/refund rail adapter with the durable settlement outbox.
 4. Inject `pkg/config.Config` through every constructor instead of remaining direct environment reads.
 
 ## Identity Terminology / Runtime Safety
 
 The database has one identity table: `users`. The role column distinguishes `customer`, `isp`, `technician`, and `admin`. “Client” is legacy API/model terminology and is not a second table or identity type. Foreign keys use `customer_id`, `isp_id`, and `technician_id` against `users.id`, with role predicates in provider queries. No duplicate client/user identity structure was introduced.
 
-Known runtime risks remain: the geospatial technician adapter currently uses a broad active-technician query until technician location/coverage tables are normalized. Matching request listing is now implemented; provider assignment routes remain incomplete. These are recorded as pending rather than silently treated as production complete.
+Nearby technician queries now enforce coordinates, radius, and requested skills. Matching exposes customer-owned match generation and a provider match inbox with actionable match IDs.
 
 ## Marketplace Scenarios
 
@@ -83,7 +83,7 @@ Known runtime risks remain: the geospatial technician adapter currently uses a b
 | ISP assigns its technician to a customer request | `PUT /api/v1/my/requests/:id/assign-technician` validates `users.role='technician'` and `users.isp_id=<isp>` before assignment. | Implemented |
 | Provider acknowledges a match | `POST /api/v1/matches/:id/respond`. | Implemented |
 | Provider declines a match | `DELETE /api/v1/matches/:id/decline`. | Implemented |
-| Assignment opens customer/provider chat | Chat service/room repository is not present in this checkout. | Pending |
+| Assignment opens customer/provider chat | `GET/POST /api/v1/jobs/:id/messages` authorizes participants directly from the assigned request; no separate room creation is required. | Implemented |
 
 ## Company Technicians, Vacancies, and Work Lifecycle
 
@@ -92,12 +92,12 @@ Known runtime risks remain: the geospatial technician adapter currently uses a b
 | Link technician to ISP | Implemented | `POST /api/v1/my/technicians/:id/link`; creates or reuses a stable company technician number and links `users.isp_id`. `POST /my/technicians` also links newly invited technicians; independent accounts remain unlinked until an ISP explicitly links them. |
 | List ISP technicians | Implemented | `GET /api/v1/my/technicians`; returns linked technician users and company metadata. |
 | End company technician link | Implemented | `POST /api/v1/my/technicians/:id/end`; records end time and clears active `users.isp_id`. |
-| Technician “works with” profile | Implemented | Public technician profile includes `works_with` with company name, company technician ID, phone snapshot, and start/end dates. |
+| Technician “works with” profile | Implemented | Public technician profile includes `works_with` with company name, company technician ID, status, and start/end dates. Private phone snapshots are not exposed. |
 | Independent technician reviews | Implemented | Existing technician review endpoint supports personal target reviews. |
 | Company-scoped technician reviews | Implemented | Review payload accepts `company_id` and `engagement_id` so customer-service work can be attributed to an ISP engagement. |
 | ISP vacancies | Implemented | `POST/GET /api/v1/my/vacancies`, `DELETE /api/v1/my/vacancies/:id`. |
-| Technician vacancy applications | Implemented | `POST /api/v1/vacancies/:id/apply`; application remains linked to `technician_id`. |
+| Technician vacancy applications | Implemented | Technicians apply/withdraw; ISPs list applicants and accept/reject them. Filling all slots closes the vacancy. |
 | Vacancy deadlines | Implemented | Deadline dates are stored and hourly expiry marks overdue vacancies as `expired`. |
 | Job termination | Implemented | `POST /api/v1/my/jobs/:id/terminate`; customer, ISP, or assigned technician can terminate with reason/date. |
 | Job deadlines | Implemented | `service_requests.deadline_at`; hourly scheduler cancels overdue active requests. |
-| Work engagement history | Schema implemented | `work_engagements` stores customer/ISP/technician start/end/termination history; creation hooks for every assignment are still pending. |
+| Work engagement history | Lifecycle writes implemented | Assignment/acceptance creates active engagements, completion closes them as completed, and termination records the end reason. A dedicated history endpoint remains pending. |

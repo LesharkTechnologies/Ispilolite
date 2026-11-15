@@ -93,7 +93,8 @@ func (r *ispRepo) CreateISP(isp *models.ISP) error {
 }
 
 func (r *ispRepo) UpdateISP(isp *models.ISP) error {
-	_, err := r.dbWriter.Exec(`UPDATE isps SET name=$1, description=$2, logo_url=$3, customer_care_number=$4, avg_response_time=$5, avg_price=$6, updated_at=now() WHERE id=$7`, isp.Name, isp.Description, isp.LogoURL, isp.CustomerCareNumber, isp.AvgResponseTime, isp.AvgPrice, isp.ID)
+	_, err := r.dbWriter.Exec(`INSERT INTO isps(id,name,description,avatar_url,logo_url,customer_care_number,avg_response_time,avg_price,created_at,updated_at)
+		VALUES($7,$1,$2,$3,$3,$4,$5,$6,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,avatar_url=EXCLUDED.avatar_url,logo_url=EXCLUDED.logo_url,customer_care_number=EXCLUDED.customer_care_number,avg_response_time=EXCLUDED.avg_response_time,avg_price=EXCLUDED.avg_price,updated_at=now()`, isp.Name, isp.Description, isp.LogoURL, isp.CustomerCareNumber, isp.AvgResponseTime, isp.AvgPrice, isp.ID)
 	return err
 }
 

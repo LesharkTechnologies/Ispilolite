@@ -37,7 +37,7 @@ func (h *MatchingHandler) Match(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = 10
 	}
-	items, err := h.service.MatchProviders(r.Context(), id, matching.MatchOptions{RadiusKM: 10})
+	items, err := h.service.MatchProvidersForCustomer(r.Context(), id, userIDFromContext(r.Context()), matching.MatchOptions{RadiusKM: 10})
 	if err != nil {
 		respondWithInternalError(w, err)
 		return
@@ -46,4 +46,14 @@ func (h *MatchingHandler) Match(w http.ResponseWriter, r *http.Request) {
 		items = items[:limit]
 	}
 	respondWithJSON(w, 200, map[string]interface{}{"success": true, "data": items})
+}
+
+func (h *MatchingHandler) MyMatches(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := h.service.ListForProvider(r.Context(), userIDFromContext(r.Context()), r.URL.Query().Get("status"), limit)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"success": true, "data": items})
 }

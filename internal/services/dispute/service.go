@@ -76,7 +76,10 @@ func (s *Service) Comment(ctx context.Context, id, userID, body string, urls []s
 }
 func (s *Service) Resolve(ctx context.Context, id, adminID, resolution, note string, amount float64) error {
 	resolution = strings.ToLower(strings.TrimSpace(resolution))
-	if resolution != "release" && resolution != "refund" && resolution != "partial_refund" {
+	// Partial refunds require an explicit provider contract for splitting the
+	// remainder between refund and payout. Fail closed instead of marking the
+	// entire escrow refunded after only a partial rail settlement.
+	if resolution != "release" && resolution != "refund" {
 		return ErrInvalid
 	}
 	if err := s.repo.Resolve(ctx, id, adminID, resolution, strings.TrimSpace(note), amount); err != nil {

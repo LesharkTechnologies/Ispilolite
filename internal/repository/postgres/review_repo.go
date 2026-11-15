@@ -32,7 +32,7 @@ func (r *reviewRepo) CreateReview(v *models.Review) error {
 	return err
 }
 func (r *reviewRepo) GetReviewsByTarget(id, kind string) ([]*models.Review, error) {
-	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at FROM reviews WHERE target_id=$1 AND target_type=$2 AND status='approved' ORDER BY created_at DESC`, id, kind)
+	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at,(SELECT count(*) FROM user_reactions ur WHERE ur.target_type='review' AND ur.target_id=reviews.id AND ur.reaction_type='like'),(SELECT count(*) FROM user_reactions ur WHERE ur.target_type='review' AND ur.target_id=reviews.id AND ur.reaction_type='helpful') FROM reviews WHERE target_id=$1 AND target_type=$2 AND status='approved' ORDER BY created_at DESC`, id, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (r *reviewRepo) ReportReview(v *models.ReviewReport) error {
 	return err
 }
 func (r *reviewRepo) ListPendingReviews(limit int) ([]*models.Review, error) {
-	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at FROM reviews WHERE status='pending' OR EXISTS(SELECT 1 FROM review_reports rr WHERE rr.review_id=reviews.id AND rr.status='open') ORDER BY created_at LIMIT $1`, limit)
+	rows, err := r.reader.Query(`SELECT id,target_id,target_type,COALESCE(user_id::text,''),COALESCE(request_id::text,''),rating,comment,status,moderation_note,photo_urls,is_verified,created_at,updated_at,(SELECT count(*) FROM user_reactions ur WHERE ur.target_type='review' AND ur.target_id=reviews.id AND ur.reaction_type='like'),(SELECT count(*) FROM user_reactions ur WHERE ur.target_type='review' AND ur.target_id=reviews.id AND ur.reaction_type='helpful') FROM reviews WHERE status='pending' OR EXISTS(SELECT 1 FROM review_reports rr WHERE rr.review_id=reviews.id AND rr.status='open') ORDER BY created_at LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func scanReviews(rows *sql.Rows) ([]*models.Review, error) {
 	for rows.Next() {
 		v := &models.Review{}
 		var photos []byte
-		if err := rows.Scan(&v.ID, &v.TargetID, &v.TargetType, &v.UserID, &v.JobRequestID, &v.Rating, &v.Comment, &v.Status, &v.ModerationNote, &photos, &v.IsVerified, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.TargetID, &v.TargetType, &v.UserID, &v.JobRequestID, &v.Rating, &v.Comment, &v.Status, &v.ModerationNote, &photos, &v.IsVerified, &v.CreatedAt, &v.UpdatedAt, &v.LikeCount, &v.HelpfulCount); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(photos, &v.PhotoURLs)

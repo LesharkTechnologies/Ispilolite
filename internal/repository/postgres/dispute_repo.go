@@ -127,6 +127,13 @@ func (r *DisputeRepository) Resolve(ctx context.Context, id, adminID, resolution
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO payment_ledger(id,escrow_id,entry_type,amount,currency,reference) VALUES($1,$2,$3,$4,$5,$6)`, utils.GenerateID(), escrowID, entry, amount, currency, "dispute:"+id)
+	if err == nil {
+		action := "release"
+		if resolution == "refund" || resolution == "partial_refund" {
+			action = "refund"
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO payment_settlement_outbox(id,escrow_id,action,amount,currency) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, utils.GenerateID(), escrowID, action, amount, currency)
+	}
 	if err != nil {
 		return err
 	}

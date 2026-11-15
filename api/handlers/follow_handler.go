@@ -8,17 +8,25 @@ import (
 	"ispilolite/api/dto"
 	"ispilolite/internal/repository/postgres"
 	followsvc "ispilolite/internal/services/follow"
+	appnotifications "ispilolite/pkg/notifications"
 	"ispilolite/pkg/profilelink"
 )
 
-type FollowHandler struct{ service *followsvc.Service }
+type FollowHandler struct {
+	service  *followsvc.Service
+	notifier *appnotifications.Service
+}
 
 func NewFollowHandler(links *profilelink.Builder) (*FollowHandler, error) {
 	repo, err := postgres.NewFollowRepository()
 	if err != nil {
 		return nil, err
 	}
-	return &FollowHandler{service: followsvc.NewService(repo, links)}, nil
+	notificationRepo, err := postgres.NewNotificationRepositoryAdapter()
+	if err != nil {
+		return nil, err
+	}
+	return &FollowHandler{service: followsvc.NewService(repo, links), notifier: appnotifications.NewService(notificationRepo, nil)}, nil
 }
 
 func followTarget(r *http.Request) string {
@@ -35,6 +43,9 @@ func (h *FollowHandler) Follow(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
+		if h.notifier != nil {
+			_ = h.notifier.Notify(r.Context(), target, "user.followed", map[string]interface{}{"follower_id": userIDFromContext(r.Context())})
+		}
 	}
 	summary, err := h.service.Summary(r.Context(), target, userIDFromContext(r.Context()))
 	if err != nil {

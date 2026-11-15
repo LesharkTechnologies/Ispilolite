@@ -21,12 +21,14 @@ type Claims struct {
 
 var (
 	// jwtKey should be loaded from a secure configuration in a real application.
-	jwtKey            []byte
-	issuer            string
-	revocationChecker func(string) bool
+	jwtKey               []byte
+	issuer               string
+	revocationChecker    func(string) bool
+	accountActiveChecker func(string, string) bool
 )
 
-func SetRevocationChecker(checker func(string) bool) { revocationChecker = checker }
+func SetRevocationChecker(checker func(string) bool)            { revocationChecker = checker }
+func SetAccountActiveChecker(checker func(string, string) bool) { accountActiveChecker = checker }
 
 // InitAuth initializes the authentication middleware with a secret key and issuer.
 func InitAuth(secret, iss string) {
@@ -76,6 +78,10 @@ func AuthMiddleware(requiredRole string) func(http.Handler) http.Handler {
 			}
 			if claims.TokenUse != "access" {
 				http.Error(w, "Unauthorized: access token required", http.StatusUnauthorized)
+				return
+			}
+			if accountActiveChecker != nil && !accountActiveChecker(claims.UserID, claims.Role) {
+				http.Error(w, "Unauthorized: account is not active", http.StatusUnauthorized)
 				return
 			}
 

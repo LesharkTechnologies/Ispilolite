@@ -116,6 +116,24 @@ func (r *userRepo) CreateUser(user *models.User) error {
 	if err != nil {
 		return err
 	}
+	// Role-specific records are part of account creation, not optional profile
+	// setup. Keeping them in this transaction prevents valid users whose public
+	// profile, packages, or search records can never be resolved.
+	switch user.Role {
+	case models.RoleISP:
+		_, err = tx.Exec(`INSERT INTO isps (id,name,avatar_url,logo_url,customer_care_number,rating,review_count,is_active,county,created_at,updated_at)
+			VALUES($1,$2,$3,$3,$4,$5,$6,true,$7,$8,$9) ON CONFLICT(id) DO NOTHING`, user.ID, user.Name, user.AvatarURL, user.Phone, user.Rating, user.TotalRatings, user.County, user.CreatedAt, user.UpdatedAt)
+	case models.RoleTechnician:
+		_, err = tx.Exec(`INSERT INTO technicians (id,user_id,name,rating,jobs_done,is_available,county,lat,lon,created_at,updated_at)
+			VALUES($1,$1,$2,$3,0,true,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING`, user.ID, user.Name, user.Rating, user.County, nullableCoordinate(user.Location, true), nullableCoordinate(user.Location, false), user.CreatedAt, user.UpdatedAt)
+		if err == nil {
+			_, err = tx.Exec(`INSERT INTO technician_profiles(technician_id,county,town,is_available,updated_at)
+				VALUES($1,$2,$3,true,$4) ON CONFLICT(technician_id) DO NOTHING`, user.ID, user.County, user.Town, user.UpdatedAt)
+		}
+	}
+	if err != nil {
+		return err
+	}
 	if user.ReferredByCode != "" {
 		result, err := tx.Exec(`INSERT INTO referrals(id,referrer_id,referred_id,code,status,created_at)
 			SELECT gen_random_uuid(),id,$2,upper($1),'pending',now() FROM users WHERE upper(referral_code)=upper($1) AND id<>$2`, user.ReferredByCode, user.ID)
@@ -130,14 +148,24 @@ func (r *userRepo) CreateUser(user *models.User) error {
 	return tx.Commit()
 }
 
+func nullableCoordinate(location *models.Coordinates, latitude bool) interface{} {
+	if location == nil {
+		return nil
+	}
+	if latitude {
+		return location.Lat
+	}
+	return location.Lng
+}
+
 func (r *userRepo) GetUserByUsername(username string) (*models.User, error) {
-	query := `SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status FROM users WHERE lower(username) = lower($1)`
+	query := `SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status,COALESCE(avatar_url,'') FROM users WHERE lower(username) = lower($1)`
 	return r.scanUser(r.dbReader.QueryRow(query, username))
 }
 
 func (r *userRepo) GetUserByPhone(phone string) (*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status,COALESCE(avatar_url,'')
 		FROM users
 		WHERE phone = $1
 	`
@@ -170,9 +198,13 @@ func (r *userRepo) scanUser(row *sql.Row) (*models.User, error) {
 		&user.CreditBalance,
 		&user.Locale,
 		&user.Status,
+		&user.AvatarURL,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if lat.Valid && lng.Valid {
+		user.Location = &models.Coordinates{Lat: lat.Float64, Lng: lng.Float64}
 	}
 
 	return user, nil
@@ -180,7 +212,7 @@ func (r *userRepo) scanUser(row *sql.Row) (*models.User, error) {
 
 func (r *userRepo) GetUserByID(userID string) (*models.User, error) {
 	query := `
-		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status
+		SELECT id, phone, username, name, email, role, password_hash, is_verified, rating, total_ratings, joined, created_at, updated_at, COALESCE(isp_id::text,''), latitude, longitude, town, county, COALESCE(referral_code,''),credit_balance,locale,status,COALESCE(avatar_url,'')
 		FROM users
 		WHERE id = $1
 	`
@@ -209,11 +241,21 @@ func (r *userRepo) GetUserByID(userID string) (*models.User, error) {
 		&user.CreditBalance,
 		&user.Locale,
 		&user.Status,
+		&user.AvatarURL,
 	)
 	if err != nil {
 		return nil, err
 	}
+	if lat.Valid && lng.Valid {
+		user.Location = &models.Coordinates{Lat: lat.Float64, Lng: lng.Float64}
+	}
 	return user, nil
+}
+
+func (r *userRepo) AccountActive(userID, role string) bool {
+	var active bool
+	err := r.dbWriter.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role=$2 AND status='active')`, userID, role).Scan(&active)
+	return err == nil && active
 }
 
 func (r *userRepo) QualifyReferral(userID string, reward float64) error {
@@ -249,11 +291,14 @@ func (r *userRepo) QualifyReferral(userID string, reward float64) error {
 }
 
 func (r *userRepo) UpdateUser(user *models.User) error {
-	query := `
-		UPDATE users
-		SET name = $1, email = $2, is_verified = $3, updated_at = $4, isp_id = NULLIF($5,'')::uuid, latitude = $6, longitude = $7, town = $8, county = $9, locale=$10
-		WHERE id = $11
-	`
+	tx, err := r.dbWriter.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	query := `UPDATE users SET name=$1,email=$2,is_verified=$3,updated_at=$4,
+		isp_id=NULLIF($5,'')::uuid,latitude=$6,longitude=$7,town=$8,county=$9,locale=$10,avatar_url=CASE WHEN $11='' THEN avatar_url ELSE $11 END
+		WHERE id=$12`
 	var lat, lng sql.NullFloat64
 	if user.Location != nil {
 		lat.Float64 = user.Location.Lat
@@ -261,7 +306,7 @@ func (r *userRepo) UpdateUser(user *models.User) error {
 		lng.Float64 = user.Location.Lng
 		lng.Valid = true
 	}
-	_, err := r.dbWriter.Exec(
+	result, err := tx.Exec(
 		query,
 		user.Name,
 		user.Email,
@@ -273,9 +318,29 @@ func (r *userRepo) UpdateUser(user *models.User) error {
 		user.Town,
 		user.County,
 		user.Locale,
+		user.AvatarURL,
 		user.ID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	switch user.Role {
+	case models.RoleISP:
+		_, err = tx.Exec(`INSERT INTO isps(id,name,avatar_url,logo_url,customer_care_number,county,created_at,updated_at)
+			VALUES($1,$2,$3,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,avatar_url=CASE WHEN EXCLUDED.avatar_url='' THEN isps.avatar_url ELSE EXCLUDED.avatar_url END,logo_url=CASE WHEN EXCLUDED.logo_url='' THEN isps.logo_url ELSE EXCLUDED.logo_url END,county=EXCLUDED.county,updated_at=EXCLUDED.updated_at`, user.ID, user.Name, user.AvatarURL, user.Phone, user.County, user.CreatedAt, user.UpdatedAt)
+	case models.RoleTechnician:
+		_, err = tx.Exec(`INSERT INTO technicians(id,user_id,name,avatar_url,rating,is_available,county,lat,lon,created_at,updated_at)
+			VALUES($1,$1,$2,$3,$4,true,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,avatar_url=CASE WHEN EXCLUDED.avatar_url='' THEN technicians.avatar_url ELSE EXCLUDED.avatar_url END,county=EXCLUDED.county,lat=EXCLUDED.lat,lon=EXCLUDED.lon,updated_at=EXCLUDED.updated_at`, user.ID, user.Name, user.AvatarURL, user.Rating, user.County, lat, lng, user.CreatedAt, user.UpdatedAt)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *userRepo) GetUsersByStatus(status string) ([]*models.User, error) {

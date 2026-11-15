@@ -16,6 +16,7 @@ import (
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/search"
 	followsvc "ispilolite/internal/services/follow"
+	socialsvc "ispilolite/internal/services/social"
 	"ispilolite/pkg/database"
 )
 
@@ -84,6 +85,17 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 		if err := users.CreateUser(user); err != nil {
 			t.Fatal(err)
 		}
+		var provisioned bool
+		switch role {
+		case "isp":
+			if err := database.GetWriter().QueryRow(`SELECT EXISTS(SELECT 1 FROM isps WHERE id=$1)`, id).Scan(&provisioned); err != nil || !provisioned {
+				t.Fatalf("ISP role profile was not provisioned transactionally: %v", err)
+			}
+		case "technician":
+			if err := database.GetWriter().QueryRow(`SELECT EXISTS(SELECT 1 FROM technicians WHERE user_id=$1) AND EXISTS(SELECT 1 FROM technician_profiles WHERE technician_id=$1)`, id).Scan(&provisioned); err != nil || !provisioned {
+				t.Fatalf("technician search/profile rows were not provisioned: %v", err)
+			}
+		}
 		return id
 	}
 	ispID := newUser("isp")
@@ -128,6 +140,37 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 	if _, err := companies.LinkTechnician(otherISP, employee1); err != nil {
 		t.Fatalf("former employee could not join another ISP: %v", err)
 	}
+	jobs, err := postgres.NewJobRequestRepo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &models.JobRequest{ID: uuid.NewString(), CustomerID: customer, RequesterRole: "customer", RequestType: "internet", Mode: "direct", TargetISPID: ispID, ServiceType: "fiber_installation", Status: "open", IsAvailable: true, CreatedAt: now, UpdatedAt: now}
+	if err := jobs.CreateJobRequest(job); err != nil {
+		t.Fatal(err)
+	}
+	installations, err := postgres.NewInstallationRepo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	customerInstallations, err := installations.GetInstallationsByClientID(customer)
+	if err != nil || len(customerInstallations) != 1 || customerInstallations[0].ID != job.ID {
+		t.Fatalf("service request did not appear as customer installation: %#v %v", customerInstallations, err)
+	}
+	ispInstallations, err := installations.GetInstallationsByISPID(ispID)
+	if err != nil || len(ispInstallations) != 1 || ispInstallations[0].ID != job.ID {
+		t.Fatalf("targeted request did not appear in ISP queue: %#v %v", ispInstallations, err)
+	}
+	if _, err := jobs.AssignTechnician(job.ID, ispID, employee2); err != nil {
+		t.Fatalf("ISP could not assign its active linked technician: %v", err)
+	}
+	if err := jobs.UpdateJobStatus(job.ID, employee2, "completed"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("invalid assigned-to-completed transition was accepted: %v", err)
+	}
+	for _, status := range []string{"accepted", "in_progress", "completed"} {
+		if err := jobs.UpdateJobStatus(job.ID, employee2, status); err != nil {
+			t.Fatalf("valid job transition %s failed: %v", status, err)
+		}
+	}
 	followRepo, err := postgres.NewFollowRepository()
 	if err != nil {
 		t.Fatal(err)
@@ -158,5 +201,46 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 	}
 	if err := follow.Unfollow(context.Background(), customer, ispID); err != nil {
 		t.Fatalf("unfollow not idempotent: %v", err)
+	}
+	vacancies, err := postgres.NewVacancyRepository()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vacancy := &models.ISPVacancy{ID: uuid.NewString(), ISPID: ispID, Title: "CI vacancy", ServiceType: "fiber", Slots: 1, Status: "open", CreatedAt: now, UpdatedAt: now}
+	if err := vacancies.Create(vacancy); err != nil {
+		t.Fatal(err)
+	}
+	if err := vacancies.Apply(vacancy.ID, independent, "available"); err != nil {
+		t.Fatal(err)
+	}
+	applications, err := vacancies.Applications(ispID, vacancy.ID)
+	if err != nil || len(applications) != 1 {
+		t.Fatalf("vacancy applications: %#v %v", applications, err)
+	}
+	if err := vacancies.Decide(ispID, vacancy.ID, applications[0].ID, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	socialRepo, err := postgres.NewSocialRepository()
+	if err != nil {
+		t.Fatal(err)
+	}
+	social := socialsvc.NewService(socialRepo)
+	if created, err := social.Favorite(context.Background(), customer, "isp", ispID); err != nil || !created {
+		t.Fatalf("favorite failed: %v %v", created, err)
+	}
+	favorites, total, _, _, err := social.Favorites(context.Background(), customer, "", 20, 0)
+	if err != nil || total != 1 || len(favorites) != 1 {
+		t.Fatalf("favorite list: %#v %d %v", favorites, total, err)
+	}
+	if created, err := social.React(context.Background(), customer, "user_profile", independent, "like"); err != nil || !created {
+		t.Fatalf("profile like failed: %v %v", created, err)
+	}
+	reactions, err := social.Reactions(context.Background(), customer, "user_profile", independent)
+	if err != nil || reactions.Counts["like"] != 1 {
+		t.Fatalf("reaction summary: %#v %v", reactions, err)
+	}
+	device, err := social.RegisterDevice(context.Background(), customer, "android", "ci-device-token-1234567890")
+	if err != nil || device.ID == "" {
+		t.Fatalf("device registration: %#v %v", device, err)
 	}
 }

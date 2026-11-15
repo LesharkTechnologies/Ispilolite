@@ -230,7 +230,7 @@ func (h *ISPEndpointsHandler) GetProfile(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusNotFound, "ISP not found")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, isp)
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: isp})
 }
 
 // UpdateProfile updates the ISP's profile.
@@ -245,6 +245,17 @@ func (h *ISPEndpointsHandler) UpdateProfile(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusInternalServerError, "failed to update isp profile")
 		return
 	}
+	if account, err := h.userService.GetUserByID(ispID); err == nil {
+		account.Name = strings.TrimSpace(req.Name)
+		if strings.TrimSpace(req.LogoURL) != "" {
+			account.AvatarURL = strings.TrimSpace(req.LogoURL)
+		}
+		account.UpdatedAt = time.Now().UTC()
+		if err := h.userService.UpdateUser(account); err != nil {
+			respondWithInternalError(w, err)
+			return
+		}
+	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "isp profile updated"})
 }
 
@@ -256,7 +267,29 @@ func (h *ISPEndpointsHandler) GetInstallations(w http.ResponseWriter, r *http.Re
 		respondWithError(w, http.StatusInternalServerError, "Failed to get installations")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, installations)
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: installations})
+}
+
+func (h *ISPEndpointsHandler) GetJobs(w http.ResponseWriter, r *http.Request) {
+	items, err := h.jobRequestService.ListForISP(userIDFromContext(r.Context()), strings.TrimSpace(r.URL.Query().Get("status")))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: items})
+}
+
+func (h *ISPEndpointsHandler) GetJob(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/my/isp-jobs/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/my/jobs/")
+	}
+	item, err := h.jobRequestService.GetForParticipant(id, userIDFromContext(r.Context()))
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: item})
 }
 
 // UpdateInstallation updates the status of an installation.
@@ -271,6 +304,13 @@ func (h *ISPEndpointsHandler) UpdateInstallation(w http.ResponseWriter, r *http.
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	if !valid[req.Status] {
 		respondWithError(w, http.StatusBadRequest, "invalid installation status")
+		return
+	}
+	if req.Status == "rejected" {
+		req.Status = "cancelled"
+	}
+	if req.Status == "assigned" && strings.TrimSpace(req.TechnicianID) == "" {
+		respondWithError(w, http.StatusBadRequest, "technician_id is required when assigning")
 		return
 	}
 	ispID := userIDFromContext(r.Context())

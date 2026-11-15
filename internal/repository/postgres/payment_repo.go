@@ -230,6 +230,9 @@ func (r *PaymentRepository) RequestRelease(ctx context.Context, escrowID, payerI
 	if err != nil {
 		return nil, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO payment_settlement_outbox(id,escrow_id,milestone_id,action,amount,currency) VALUES($1,$2,$3,'release',$4,$5) ON CONFLICT DO NOTHING`, utils.GenerateID(), escrowID, m.ID, m.Amount, currency); err != nil {
+		return nil, err
+	}
 	var remaining int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM escrow_milestones WHERE escrow_id=$1 AND status='funded'`, escrowID).Scan(&remaining); err != nil {
 		return nil, err
@@ -276,6 +279,7 @@ func (r *PaymentRepository) ConfirmSettlement(ctx context.Context, escrowID, mil
 		if err != nil {
 			return err
 		}
+		_, _ = tx.ExecContext(ctx, `UPDATE payment_settlement_outbox SET status='completed',updated_at=now(),last_error='' WHERE escrow_id=$1 AND action='refund' AND status IN ('pending','processing')`, escrowID)
 		return tx.Commit()
 	}
 	if action != "released" {
@@ -309,6 +313,7 @@ func (r *PaymentRepository) ConfirmSettlement(ctx context.Context, escrowID, mil
 	if err != nil {
 		return err
 	}
+	_, _ = tx.ExecContext(ctx, `UPDATE payment_settlement_outbox SET status='completed',updated_at=now(),last_error='' WHERE escrow_id=$1 AND milestone_id=$2 AND action='release' AND status IN ('pending','processing')`, escrowID, settledID)
 	var remaining int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM escrow_milestones WHERE escrow_id=$1 AND status<>'released'`, escrowID).Scan(&remaining); err != nil {
 		return err

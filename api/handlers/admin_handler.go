@@ -11,6 +11,10 @@ import (
 
 	"ispilolite/api/dto"
 	"ispilolite/internal/models"
+	"ispilolite/internal/repository"
+	"ispilolite/internal/repository/postgres"
+	authsvc "ispilolite/internal/services/auth"
+	"ispilolite/internal/utils"
 	"ispilolite/pkg/audit"
 	"ispilolite/pkg/database"
 )
@@ -18,6 +22,7 @@ import (
 type AdminHandler struct {
 	db    *sql.DB
 	audit *audit.Store
+	users repository.UserRepository
 }
 
 func NewAdminHandler() (*AdminHandler, error) {
@@ -25,7 +30,166 @@ func NewAdminHandler() (*AdminHandler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &AdminHandler{db: writer, audit: audit.Configure(writer, os.Getenv("AUDIT_ARCHIVE_ROOT"))}, nil
+	users, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, err
+	}
+	return &AdminHandler{db: writer, audit: audit.Configure(writer, os.Getenv("AUDIT_ARCHIVE_ROOT")), users: users}, nil
+}
+
+func (h *AdminHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Phone, Name, Email, Username, Password, Role string
+		IsVerified                                   *bool `json:"is_verified,omitempty"`
+	}
+	if decodeJSON(w, r, &input) != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid account payload")
+		return
+	}
+	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
+	if !map[string]bool{"isp": true, "technician": true, "admin": true}[input.Role] || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Username) == "" || len(input.Password) < 8 {
+		respondWithError(w, http.StatusBadRequest, "role, name, username, and an 8-character password are required")
+		return
+	}
+	if err := authsvc.ValidatePhone(input.Phone); err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	hash, err := utils.HashPassword(input.Password)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	verified := true
+	if input.IsVerified != nil {
+		verified = *input.IsVerified
+	}
+	now := time.Now().UTC()
+	user := &models.User{ID: utils.GenerateID(), Phone: strings.TrimSpace(input.Phone), Name: strings.TrimSpace(input.Name), Email: strings.TrimSpace(input.Email), Username: strings.TrimSpace(input.Username), Role: input.Role, PasswordHash: hash, IsVerified: verified, Status: "active", Joined: now, CreatedAt: now, UpdatedAt: now, Locale: "en"}
+	if err := h.users.CreateUser(user); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			respondWithError(w, http.StatusConflict, "phone or username already exists")
+			return
+		}
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: user})
+}
+
+func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	role, status := strings.TrimSpace(r.URL.Query().Get("role")), strings.TrimSpace(r.URL.Query().Get("status"))
+	rows, err := h.db.QueryContext(r.Context(), `SELECT id,phone,username,name,email,role,is_verified,status,created_at,updated_at,count(*) OVER()
+		FROM users WHERE ($1='' OR role=$1) AND ($2='' OR status=$2) AND ($3='' OR name ILIKE '%'||$3||'%' OR username ILIKE '%'||$3||'%' OR phone ILIKE '%'||$3||'%')
+		ORDER BY created_at DESC LIMIT $4 OFFSET $5`, role, status, query, limit, offset)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]interface{}, 0)
+	total := 0
+	for rows.Next() {
+		var id, phone, username, name, email, userRole, userStatus string
+		var verified bool
+		var created, updated time.Time
+		if err := rows.Scan(&id, &phone, &username, &name, &email, &userRole, &verified, &userStatus, &created, &updated, &total); err != nil {
+			respondWithInternalError(w, err)
+			return
+		}
+		items = append(items, map[string]interface{}{"id": id, "phone": phone, "username": username, "name": name, "email": email, "role": userRole, "is_verified": verified, "status": userStatus, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]interface{}{"items": items, "total": total, "limit": limit, "offset": offset}})
+}
+
+func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/admin/users/")
+	var input struct {
+		Status     string `json:"status,omitempty"`
+		IsVerified *bool  `json:"is_verified,omitempty"`
+	}
+	if id == "" || decodeJSON(w, r, &input) != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid user update")
+		return
+	}
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if input.Status != "" && !map[string]bool{"active": true, "suspended": true}[input.Status] {
+		respondWithError(w, http.StatusBadRequest, "status must be active or suspended")
+		return
+	}
+	if input.Status == "" && input.IsVerified == nil {
+		respondWithError(w, http.StatusBadRequest, "status or is_verified is required")
+		return
+	}
+	result, err := h.db.ExecContext(r.Context(), `UPDATE users SET status=CASE WHEN $2='' THEN status ELSE $2 END,is_verified=COALESCE($3,is_verified),updated_at=now() WHERE id=$1`, id, input.Status, input.IsVerified)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		respondWithError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if input.Status != "" {
+		_, _ = h.db.ExecContext(r.Context(), `UPDATE isps SET is_active=$2,updated_at=now() WHERE id=$1`, id, input.Status == "active")
+		if input.Status != "active" {
+			_, _ = h.db.ExecContext(r.Context(), `UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id)
+		}
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "user updated"})
+}
+
+func (h *AdminHandler) SettlementOutbox(w http.ResponseWriter, r *http.Request) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := h.db.QueryContext(r.Context(), `SELECT id,escrow_id,COALESCE(milestone_id::text,''),action,amount,currency,status,attempts,last_error,next_attempt_at,created_at,updated_at FROM payment_settlement_outbox WHERE ($1='' OR status=$1) ORDER BY created_at LIMIT $2`, status, limit)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, escrow, milestone, action, currency, itemStatus, lastError string
+		var amount float64
+		var attempts int
+		var next, created, updated time.Time
+		if err := rows.Scan(&id, &escrow, &milestone, &action, &amount, &currency, &itemStatus, &attempts, &lastError, &next, &created, &updated); err != nil {
+			respondWithInternalError(w, err)
+			return
+		}
+		items = append(items, map[string]interface{}{"id": id, "escrow_id": escrow, "milestone_id": milestone, "action": action, "amount": amount, "currency": currency, "status": itemStatus, "attempts": attempts, "last_error": lastError, "next_attempt_at": next, "created_at": created, "updated_at": updated})
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: items})
+}
+func (h *AdminHandler) RetrySettlement(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/admin/settlements/outbox/")
+	result, err := h.db.ExecContext(r.Context(), `UPDATE payment_settlement_outbox SET status='pending',next_attempt_at=now(),last_error='',updated_at=now() WHERE id=$1 AND status='failed'`, id)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		respondWithError(w, 404, "failed settlement item not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "settlement queued for retry"})
 }
 
 func (h *AdminHandler) GetDeletionRequests(w http.ResponseWriter, r *http.Request) {

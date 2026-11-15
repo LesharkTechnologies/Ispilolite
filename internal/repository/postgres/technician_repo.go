@@ -35,12 +35,21 @@ func (r *technicianRepo) UpsertProfile(p *models.TechnicianProfile) error {
 	if _, err = tx.Exec(`DELETE FROM technician_profile_skills WHERE technician_id=$1`, p.TechnicianID); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(`DELETE FROM technician_skills WHERE technician_id IN (SELECT id FROM technicians WHERE id=$1 OR user_id=$1)`, p.TechnicianID); err != nil {
+		return err
+	}
 	for _, skill := range p.Skills {
 		if strings.TrimSpace(skill) != "" {
 			if _, err = tx.Exec(`INSERT INTO technician_profile_skills(technician_id,skill) VALUES($1,$2) ON CONFLICT DO NOTHING`, p.TechnicianID, strings.TrimSpace(skill)); err != nil {
 				return err
 			}
+			if _, err = tx.Exec(`INSERT INTO technician_skills(technician_id,skill) SELECT id,$2 FROM technicians WHERE id=$1 OR user_id=$1 ON CONFLICT DO NOTHING`, p.TechnicianID, strings.TrimSpace(skill)); err != nil {
+				return err
+			}
 		}
+	}
+	if _, err = tx.Exec(`UPDATE technicians SET is_available=$1,county=$2,updated_at=now() WHERE id=$3 OR user_id=$3`, p.IsAvailable, p.County, p.TechnicianID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -55,20 +64,20 @@ func (r *technicianRepo) GetProfile(id string) (*models.TechnicianProfile, error
 }
 
 func (r *technicianRepo) GetCompanyLinks(id string) ([]map[string]interface{}, error) {
-	rows, err := r.reader.Query(`SELECT l.isp_id,l.company_technician_id,l.phone_snapshot,l.started_at,l.ended_at,u.name FROM isp_technicians l JOIN users u ON u.id=l.isp_id WHERE l.technician_id=$1 ORDER BY l.started_at DESC`, id)
+	rows, err := r.reader.Query(`SELECT l.isp_id,l.company_technician_id,l.started_at,l.ended_at,u.name,l.status FROM isp_technicians l JOIN users u ON u.id=l.isp_id WHERE l.technician_id=$1 ORDER BY l.started_at DESC`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []map[string]interface{}{}
 	for rows.Next() {
-		var ispID, companyID, phone, name string
+		var ispID, companyID, name, status string
 		var start time.Time
 		var end *time.Time
-		if err := rows.Scan(&ispID, &companyID, &phone, &start, &end, &name); err != nil {
+		if err := rows.Scan(&ispID, &companyID, &start, &end, &name, &status); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]interface{}{"isp_id": ispID, "company_technician_id": companyID, "phone": phone, "company_name": name, "started_at": start, "ended_at": end})
+		out = append(out, map[string]interface{}{"isp_id": ispID, "company_technician_id": companyID, "company_name": name, "status": status, "started_at": start, "ended_at": end})
 	}
 	return out, rows.Err()
 }
@@ -136,7 +145,7 @@ func (r *technicianRepo) UpdatePost(p *models.TechnicianPost) error {
 func (r *technicianRepo) GetPostByID(id string) (*models.TechnicianPost, error) {
 	p := &models.TechnicianPost{}
 	var media []byte
-	err := r.reader.QueryRow(`SELECT id,technician_id,title,description,service_type,media_urls,status,created_at,updated_at FROM technician_posts WHERE id=$1`, id).Scan(&p.ID, &p.TechnicianID, &p.Title, &p.Description, &p.ServiceType, &media, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	err := r.reader.QueryRow(`SELECT id,technician_id,title,description,service_type,media_urls,status,created_at,updated_at,(SELECT count(*) FROM user_reactions WHERE target_type='technician_post' AND target_id=technician_posts.id AND reaction_type='like') FROM technician_posts WHERE id=$1`, id).Scan(&p.ID, &p.TechnicianID, &p.Title, &p.Description, &p.ServiceType, &media, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.LikeCount)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +162,7 @@ func (r *technicianRepo) ListPublishedPosts(kind string, limit int) ([]*models.T
 	return r.posts(`status='published' AND ($1='' OR service_type=$1)`, kind, limit)
 }
 func (r *technicianRepo) posts(where string, args ...interface{}) ([]*models.TechnicianPost, error) {
-	rows, err := r.reader.Query(`SELECT id,technician_id,title,description,service_type,media_urls,status,created_at,updated_at FROM technician_posts WHERE `+where+` ORDER BY created_at DESC`, args...)
+	rows, err := r.reader.Query(`SELECT id,technician_id,title,description,service_type,media_urls,status,created_at,updated_at,(SELECT count(*) FROM user_reactions WHERE target_type='technician_post' AND target_id=technician_posts.id AND reaction_type='like') FROM technician_posts WHERE `+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +171,7 @@ func (r *technicianRepo) posts(where string, args ...interface{}) ([]*models.Tec
 	for rows.Next() {
 		p := &models.TechnicianPost{}
 		var media []byte
-		if err := rows.Scan(&p.ID, &p.TechnicianID, &p.Title, &p.Description, &p.ServiceType, &media, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.TechnicianID, &p.Title, &p.Description, &p.ServiceType, &media, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.LikeCount); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(media, &p.MediaURLs)

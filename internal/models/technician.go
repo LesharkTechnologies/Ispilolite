@@ -10,22 +10,22 @@ type Technician struct {
 	Name      string `json:"name" db:"name"`
 	AvatarURL string `json:"avatar_url" db:"avatar_url"`
 	ISPID     string `json:"isp_id,omitempty" db:"isp_id"`
-	Phone     string `db:"phone"`
-	Email     string `db:"email"`
+	Phone     string `json:"-" db:"phone"`
+	Email     string `json:"-" db:"email"`
 	// Foreign key to isps table
-	ISPName     string    `db:"isp_name"`    // Denormalized for search convenience
-	LocationID  string    `db:"location_id"` // Foreign key to locations table
+	ISPName     string    `json:"isp_name,omitempty" db:"isp_name"`       // Denormalized for search convenience
+	LocationID  string    `json:"location_id,omitempty" db:"location_id"` // Foreign key to locations table
 	County      string    `json:"county" db:"county"`
 	SubCounty   string    `json:"sub_county" db:"sub_county"`
 	Village     string    `json:"village" db:"village"`
 	Point       *GeoPoint `json:"point,omitempty" db:"-"`
 	Location    *GeoPoint `json:"location,omitempty" db:"-"`
-	Rating      float64   `db:"rating"`
+	Rating      float64   `json:"rating" db:"rating"`
 	ReviewCount int       `json:"review_count" db:"review_count"`
-	JobsDone    int       `db:"jobs_done"`
-	IsAvailable bool      `db:"is_available"`
-	CreatedAt   time.Time `db:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at"`
+	JobsDone    int       `json:"jobs_done" db:"jobs_done"`
+	IsAvailable bool      `json:"is_available" db:"is_available"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 
 	// Roles and Skills are loaded from join tables (technician_roles, technician_skills)
 	Roles  []string `json:"roles" db:"-"`
@@ -63,4 +63,5 @@ type TechnicianPost struct {
 	Status       string    `json:"status" db:"status"`
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	LikeCount    int       `json:"like_count" db:"like_count"`
 }

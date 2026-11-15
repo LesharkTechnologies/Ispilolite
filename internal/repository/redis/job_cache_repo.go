@@ -17,6 +17,8 @@ type JobRepository interface {
 	GetJobRequestByID(id string) (*models.JobRequest, error)
 	ListForCustomer(id, status string) ([]*models.JobRequest, error)
 	ListForTechnician(id, status string) ([]*models.JobRequest, error)
+	ListForISP(id, status string) ([]*models.JobRequest, error)
+	GetForParticipant(requestID, participantID string) (*models.JobRequest, error)
 	ListAvailable(county, town, serviceType string) ([]*models.JobRequest, error)
 	ApplyToJob(a *models.JobApplication) error
 	ListApplications(requestID, customerID string) ([]*models.JobApplication, error)
@@ -85,6 +87,14 @@ func (r *CachedJobRepository) ListForCustomer(id, status string) ([]*models.JobR
 
 func (r *CachedJobRepository) ListForTechnician(id, status string) ([]*models.JobRequest, error) {
 	return r.next.ListForTechnician(id, status)
+}
+
+func (r *CachedJobRepository) ListForISP(id, status string) ([]*models.JobRequest, error) {
+	return r.next.ListForISP(id, status)
+}
+
+func (r *CachedJobRepository) GetForParticipant(requestID, participantID string) (*models.JobRequest, error) {
+	return r.next.GetForParticipant(requestID, participantID)
 }
 
 func (r *CachedJobRepository) ListAvailable(county, town, serviceType string) ([]*models.JobRequest, error) {

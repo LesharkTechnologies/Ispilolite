@@ -65,7 +65,7 @@ func (h *TechnicianHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, user)
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: user})
 }
 
 // GetJobs returns a list of the technician's jobs.

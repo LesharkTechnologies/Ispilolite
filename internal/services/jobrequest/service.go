@@ -103,6 +103,12 @@ func (s *Service) ListForCustomer(id, status string) ([]*models.JobRequest, erro
 func (s *Service) ListForTechnician(id, status string) ([]*models.JobRequest, error) {
 	return s.repo.ListForTechnician(id, status)
 }
+func (s *Service) ListForISP(id, status string) ([]*models.JobRequest, error) {
+	return s.repo.ListForISP(id, status)
+}
+func (s *Service) GetForParticipant(requestID, participantID string) (*models.JobRequest, error) {
+	return s.repo.GetForParticipant(requestID, participantID)
+}
 func (s *Service) ListAvailable(county, town, service string) ([]*models.JobRequest, error) {
 	return s.repo.ListAvailable(county, town, service)
 }

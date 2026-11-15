@@ -82,6 +82,97 @@ Use RFC3339 UTC timestamps, for example `2026-09-12T23:59:59Z`.
 
 Frontend should treat IDs as opaque UUID/string values and should not derive identity from phone numbers. Phone numbers are contact fields only.
 
+## Production workflow endpoints
+
+### ISP work queue
+
+```http
+GET /my/isp-jobs?status=open
+GET /my/isp-jobs/:id
+```
+
+Both require an ISP token. The queue includes requests targeting the ISP,
+requests assigned to it, its own technician-work requests, and requests to
+which it applied. ISP installation views and updates now use the same
+`service_requests` records as customer creation routes.
+
+### Provider matches
+
+```http
+GET /my/matches?status=notified&limit=20
+POST /matches/:id/respond
+DELETE /matches/:id/decline
+```
+
+ISP and technician providers receive stable match IDs in this inbox and in
+match notifications. Only the customer who owns a request can call
+`GET /matches/request/:id` to generate/re-run matching.
+
+### Notifications
+
+```http
+GET /notifications/unread-count
+PUT /notifications/read-all
+PUT /notifications/:id/read
+```
+
+All three operate only on the authenticated user's notifications.
+
+### Favorites and reactions
+
+```http
+POST   /favorites/{isp|technician}/:id
+DELETE /favorites/{isp|technician}/:id
+GET    /my/favorites?type=&limit=20&offset=0
+
+POST   /reactions/{user_profile|technician_post|review}/:id
+DELETE /reactions/:type/:id?reaction=like
+GET    /reactions/:type/:id
+```
+
+Reaction POST bodies use `{ "reaction": "like" }` or
+`{ "reaction": "helpful" }`. Counters use unique per-user reactions, so
+repeating the same request does not inflate totals.
+
+### Push devices
+
+```http
+POST /my/devices
+DELETE /my/devices
+```
+
+Registration uses `{ "platform": "android", "token": "..." }`; supported
+platforms are `android`, `ios`, and `web`. Push events are forwarded to the
+authenticated HTTPS notification gateway configured in the environment.
+
+### Vacancy applicants
+
+```http
+GET   /my/vacancies/:id/applications
+PATCH /my/vacancies/:id/applications/:application_id
+DELETE /vacancies/:id/application
+```
+
+The PATCH body accepts `accepted` or `rejected`. Accepting enough applicants
+to fill all slots closes the vacancy. Linking an accepted technician as an
+employee remains an explicit company action.
+
+### Admin account provisioning
+
+```http
+POST /admin/users
+GET /admin/users?q=&role=&status=&limit=20&offset=0
+PATCH /admin/users/:id
+GET /admin/settlements/outbox?status=pending
+POST /admin/settlements/outbox/:id/retry
+```
+
+Admins can provision ISP, technician, and admin accounts. Provisioning creates
+the ISP/technician catalog rows in the same transaction. The PATCH endpoint
+accepts `status` (`active` or `suspended`) and/or `is_verified`; suspending an
+account revokes refresh sessions, and access middleware rejects its existing
+access tokens immediately.
+
 ## User follows (customer, technician, ISP)
 
 Following is social only: it does not hire a technician, add them to an ISP,
@@ -90,11 +181,17 @@ technician search results, for `:id`.
 
 | Action | Method and path | Result in `data` |
 |---|---|---|
-| Follow | `POST /users/:id/follow` | `{ "user_id": "...", "is_following": true }` |
+| Follow | `POST /users/:id/follow` | Summary object below (201 new, 200 already followed) |
 | Unfollow | `DELETE /users/:id/follow` | `{ "user_id": "...", "is_following": false }` |
-| Counts/status | `GET /users/:id/follow-stats` or `/my/follow-stats` | `{ "follower_count": 0, "following_count": 0, "is_following": false, "user_id": "..." }` |
+| Counts/status | `GET /users/:id/follow-stats` or `/my/follow-stats` | `{ "follower_count": 0, "following_count": 0, "is_following": false, "user_id": "...", "profile_path": "/u/...", "profile_url": "https://..." }` |
 | Followers | `GET /users/:id/followers` or `/my/followers` | `{ "items": [], "total": 0, "limit": 20, "offset": 0 }` |
 | Following | `GET /users/:id/following` or `/my/following` | Same paginated response |
+| My share link | `GET /my/public-profile` | `{ "profile_slug": "...", "profile_path": "/u/...", "profile_url": "https://..." }` |
+
+Public profile pages are available without a token at `GET /u/:slug` (HTML)
+and `GET /profiles/:slug` (JSON). The stored path is domain-free; the API
+combines it with `PROFILE_PUBLIC_BASE_URL` at response time, so changing the
+domain keeps old links valid.
 
 All require a customer, technician, or ISP JWT. `limit` is capped at 100;
 follower lists expose only public user fields. Follow is idempotent (201 new,

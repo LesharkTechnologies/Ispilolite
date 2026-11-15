@@ -27,10 +27,8 @@ func NewInstallationRepo() (*installationRepo, error) {
 }
 
 func (r *installationRepo) CreateInstallation(installation *models.Installation) error {
-	query := `
-		INSERT INTO installations (id, location_id, service_type, description, preferred_date, budget, status, client_id, isp_id, technician_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`
+	query := `INSERT INTO service_requests(id,customer_id,requester_role,request_type,mode,target_isp_id,assigned_isp_id,assigned_technician_id,location_id,service_type,description,preferred_date,budget,status,is_available,created_at,updated_at)
+		VALUES($1,$8,'customer','internet',CASE WHEN NULLIF($9,'')::uuid IS NULL THEN 'broadcast' ELSE 'direct' END,NULLIF($9,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$7='open',$11,$12)`
 	_, err := r.dbWriter.Exec(
 		query,
 		installation.ID,
@@ -50,11 +48,7 @@ func (r *installationRepo) CreateInstallation(installation *models.Installation)
 }
 
 func (r *installationRepo) GetInstallationsByClientID(clientID string) ([]*models.Installation, error) {
-	query := `
-		SELECT id, location_id, service_type, description, preferred_date, budget, status, client_id, isp_id, technician_id, created_at, updated_at
-		FROM installations
-		WHERE client_id = $1
-	`
+	query := installationSelect + ` WHERE customer_id=$1 AND request_type='internet' AND deleted_at IS NULL ORDER BY created_at DESC`
 	rows, err := r.dbReader.Query(query, clientID)
 	if err != nil {
 		return nil, err
@@ -88,11 +82,7 @@ func (r *installationRepo) GetInstallationsByClientID(clientID string) ([]*model
 }
 
 func (r *installationRepo) GetInstallationsByISPID(ispID string) ([]*models.Installation, error) {
-	query := `
-		SELECT id, location_id, service_type, description, preferred_date, budget, status, client_id, isp_id, technician_id, created_at, updated_at
-		FROM installations
-		WHERE isp_id = $1
-	`
+	query := installationSelect + ` WHERE request_type='internet' AND (target_isp_id=$1 OR assigned_isp_id=$1) AND deleted_at IS NULL ORDER BY created_at DESC`
 	rows, err := r.dbReader.Query(query, ispID)
 	if err != nil {
 		return nil, err
@@ -126,11 +116,7 @@ func (r *installationRepo) GetInstallationsByISPID(ispID string) ([]*models.Inst
 }
 
 func (r *installationRepo) GetInstallationByID(installationID string) (*models.Installation, error) {
-	query := `
-		SELECT id, location_id, service_type, description, preferred_date, budget, status, client_id, isp_id, technician_id, created_at, updated_at
-		FROM installations
-		WHERE id = $1
-	`
+	query := installationSelect + ` WHERE id=$1 AND request_type='internet' AND deleted_at IS NULL`
 	installation := &models.Installation{}
 	err := r.dbReader.QueryRow(query, installationID).Scan(
 		&installation.ID,
@@ -153,7 +139,11 @@ func (r *installationRepo) GetInstallationByID(installationID string) (*models.I
 }
 
 func (r *installationRepo) UpdateInstallation(installation *models.Installation) error {
-	result, err := r.dbWriter.Exec(`UPDATE installations SET status=$1, technician_id=$2, updated_at=$3 WHERE id=$4 AND isp_id=$5`, installation.Status, installation.TechnicianID, installation.UpdatedAt, installation.ID, installation.IspID)
+	allowed := map[string]string{"accepted": "open", "assigned": "open,accepted,assigned", "in_progress": "accepted,assigned", "completed": "in_progress", "cancelled": "open,accepted,assigned,in_progress"}[installation.Status]
+	if allowed == "" {
+		return sql.ErrNoRows
+	}
+	result, err := r.dbWriter.Exec(`UPDATE service_requests SET status=$1,assigned_isp_id=$5,assigned_technician_id=COALESCE(NULLIF($2,'')::uuid,assigned_technician_id),is_available=false,updated_at=$3 WHERE id=$4 AND (target_isp_id=$5 OR assigned_isp_id=$5) AND request_type='internet' AND status=ANY(string_to_array($6,',')) AND deleted_at IS NULL`, installation.Status, installation.TechnicianID, installation.UpdatedAt, installation.ID, installation.IspID, allowed)
 	if err != nil {
 		return err
 	}
@@ -164,5 +154,11 @@ func (r *installationRepo) UpdateInstallation(installation *models.Installation)
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
+	if installation.Status == "completed" {
+		_, _ = r.dbWriter.Exec(`UPDATE technicians SET jobs_done=jobs_done+1,updated_at=now() WHERE user_id=(SELECT assigned_technician_id FROM service_requests WHERE id=$1)`, installation.ID)
+		_, _ = r.dbWriter.Exec(`UPDATE work_engagements SET status='completed',ended_at=now() WHERE request_id=$1 AND status='active'`, installation.ID)
+	}
 	return nil
 }
+
+const installationSelect = `SELECT id,COALESCE(location_id::text,''),service_type,description,preferred_date,budget,status,customer_id::text,COALESCE(assigned_isp_id::text,target_isp_id::text,''),COALESCE(assigned_technician_id::text,target_technician_id::text,''),created_at,updated_at FROM service_requests`

@@ -43,7 +43,11 @@ func (h *QuotationHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		h.respondError(w, err)
 		return
 	}
-	respondWithJSON(w, 201, dto.APIResponse{Success: true, Message: "quotation finalized", Data: map[string]interface{}{"quotation": q, "public_url": "https://quotations.ispilo.co.ke/" + q.PublicCode}})
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("QUOTATION_PUBLIC_BASE_URL")), "/")
+	if base == "" {
+		base = "https://quotations.ispilo.co.ke"
+	}
+	respondWithJSON(w, 201, dto.APIResponse{Success: true, Message: "quotation finalized", Data: map[string]interface{}{"quotation": q, "public_url": base + "/" + q.PublicCode}})
 }
 func (h *QuotationHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

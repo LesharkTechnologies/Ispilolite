@@ -74,10 +74,11 @@ type RefreshTokenRequest struct {
 }
 
 type UpdateProfileRequest struct {
-	Name     string       `json:"name,omitempty"`
-	Email    string       `json:"email,omitempty"`
-	Location *LocationDTO `json:"location,omitempty"`
-	Locale   string       `json:"locale,omitempty"`
+	Name      string       `json:"name,omitempty"`
+	Email     string       `json:"email,omitempty"`
+	AvatarURL string       `json:"avatar_url,omitempty"`
+	Location  *LocationDTO `json:"location,omitempty"`
+	Locale    string       `json:"locale,omitempty"`
 }
 
 type LocationDTO struct {

@@ -18,8 +18,8 @@ type followRepoStub struct{ active map[string]bool }
 func (s *followRepoStub) Active(_ context.Context, id string) (bool, error)    { return s.active[id], nil }
 func (*followRepoStub) Follow(context.Context, string, string) (bool, error)   { return true, nil }
 func (*followRepoStub) Unfollow(context.Context, string, string) (bool, error) { return true, nil }
-func (*followRepoStub) Summary(_ context.Context, id, _ string) (*models.FollowSummary, error) {
-	return &models.FollowSummary{UserID: id, FollowerCount: 1}, nil
+func (*followRepoStub) Summary(_ context.Context, id, viewer string) (*models.FollowSummary, error) {
+	return &models.FollowSummary{UserID: id, FollowerCount: 1, IsFollowing: id != viewer, ProfilePath: "/u/sample-2026-00112233445566778899aabbccddeeff"}, nil
 }
 func (*followRepoStub) Followers(_ context.Context, _ string, limit, offset int) (*models.FollowPage, error) {
 	return &models.FollowPage{Items: []*models.FollowProfile{{ID: uuid.NewString(), Name: "Sample", Role: "technician", AvatarURL: "", FollowedAt: time.Now()}}, Total: 1, Limit: limit, Offset: offset}, nil

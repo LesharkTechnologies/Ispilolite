@@ -34,6 +34,10 @@ func main() {
 	if webhook == "" {
 		log.Fatal("NOTIFICATION_WEBHOOK_URL is required")
 	}
+	webhookToken := os.Getenv("NOTIFICATION_WEBHOOK_TOKEN")
+	if os.Getenv("ENVIRONMENT") == "production" && webhookToken == "" {
+		log.Fatal("NOTIFICATION_WEBHOOK_TOKEN is required in production")
+	}
 	parsed, err := url.Parse(webhook)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path == "/api/v1/notifications/webhook" {
 		log.Fatal("NOTIFICATION_WEBHOOK_URL must be an HTTPS delivery provider, not the API's nonexistent /api/v1/notifications/webhook route")
@@ -46,7 +50,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client := &http.Client{Timeout: 10 * time.Second}
-	handler := func(ctx context.Context, event queue.Event) error { return deliver(ctx, client, webhook, event) }
+	handler := func(ctx context.Context, event queue.Event) error {
+		return deliver(ctx, client, webhook, webhookToken, event)
+	}
 	prefetch := getenvInt("RABBITMQ_PREFETCH", 20)
 	if err := service.Consume(ctx, queue.NotificationPushQueue, prefetch, handler); err != nil {
 		log.Fatalf("consume push queue: %v", err)
@@ -73,7 +79,7 @@ func main() {
 	_ = server.Shutdown(shutdownCtx)
 }
 
-func deliver(ctx context.Context, client *http.Client, url string, event queue.Event) error {
+func deliver(ctx context.Context, client *http.Client, url, token string, event queue.Event) error {
 	body, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -84,6 +90,9 @@ func deliver(ctx context.Context, client *http.Client, url string, event queue.E
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", event.ID)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		return err

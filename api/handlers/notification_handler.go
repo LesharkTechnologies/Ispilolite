@@ -32,12 +32,30 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NotificationHandler) Read(w http.ResponseWriter, r *http.Request) {
-	id := pathParam(r.URL.Path, "/api/v1/my/notifications/")
+	id := pathParam(r.URL.Path, "/api/v1/notifications/")
 	if err := h.repository.MarkNotificationRead(userIDFromContext(r.Context()), id); err != nil {
 		respondWithError(w, http.StatusNotFound, "notification not found")
 		return
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "notification marked as read"})
+}
+
+func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
+	count, err := h.repository.UnreadCount(userIDFromContext(r.Context()))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]int{"unread_count": count}})
+}
+
+func (h *NotificationHandler) ReadAll(w http.ResponseWriter, r *http.Request) {
+	count, err := h.repository.MarkAllRead(userIDFromContext(r.Context()))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]int64{"updated": count}})
 }
 
 func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {

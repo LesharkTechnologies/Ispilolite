@@ -12,4 +12,6 @@ type PublicProfile struct {
 	ProfileURL     string `json:"profile_url"`
 	FollowerCount  int    `json:"follower_count"`
 	FollowingCount int    `json:"following_count"`
+	FavoriteCount  int    `json:"favorite_count"`
+	LikeCount      int    `json:"like_count"`
 }

@@ -85,6 +85,8 @@ type JobRequestRepository interface {
 	GetJobRequestByID(id string) (*models.JobRequest, error)
 	ListForCustomer(customerID string, status string) ([]*models.JobRequest, error)
 	ListForTechnician(technicianID string, status string) ([]*models.JobRequest, error)
+	ListForISP(ispID string, status string) ([]*models.JobRequest, error)
+	GetForParticipant(requestID, participantID string) (*models.JobRequest, error)
 	ListAvailable(county, town, serviceType string) ([]*models.JobRequest, error)
 	ApplyToJob(application *models.JobApplication) error
 	ListApplications(requestID, customerID string) ([]*models.JobApplication, error)

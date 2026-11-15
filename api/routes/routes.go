@@ -48,6 +48,11 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	accountRepo, err := postgres.NewUserRepo()
+	if err != nil {
+		return nil, nil, err
+	}
+	middleware.SetAccountActiveChecker(accountRepo.AccountActive)
 
 	authHandlerInst, err := handlers.NewAuthHandler()
 	if err != nil {
@@ -70,6 +75,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 		return nil, nil, err
 	}
 	profileHandler, err := handlers.NewPublicProfileHandler(profileLinks)
+	if err != nil {
+		return nil, nil, err
+	}
+	socialHandler, err := handlers.NewSocialHandler()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -298,6 +307,17 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/my/follow-stats", socialUserHandler(followHandler.Summary))
 	api.GET("/my/followers", socialUserHandler(followHandler.Followers))
 	api.GET("/my/following", socialUserHandler(followHandler.Following))
+	api.POST("/favorites/:type/:id", socialUserHandler(socialHandler.Favorite))
+	api.DELETE("/favorites/:type/:id", socialUserHandler(socialHandler.Unfavorite))
+	api.GET("/my/favorites", socialUserHandler(socialHandler.Favorites))
+	api.POST("/users/favorites/:type/:id", socialUserHandler(socialHandler.Favorite))
+	api.DELETE("/users/favorites/:type/:id", socialUserHandler(socialHandler.Unfavorite))
+	api.GET("/users/favorites", socialUserHandler(socialHandler.Favorites))
+	api.POST("/reactions/:type/:id", socialUserHandler(socialHandler.React))
+	api.DELETE("/reactions/:type/:id", socialUserHandler(socialHandler.Unreact))
+	api.GET("/reactions/:type/:id", socialUserHandler(socialHandler.Reactions))
+	api.POST("/my/devices", socialUserHandler(socialHandler.RegisterDevice))
+	api.DELETE("/my/devices", socialUserHandler(socialHandler.RemoveDevice))
 	api.GET("/my/public-profile", socialUserHandler(profileHandler.Mine))
 	api.GET("/profiles/:slug", stdHandler(profileHandler.JSON))
 
@@ -320,6 +340,7 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/geo/locations/:id", stdHandler(location.GetLocation))
 	api.POST("/geo/locations/:id/aliases", authHandler("", location.AddAlias))
 	api.GET("/matches/request/:id", authHandler("customer", matchingHandler.Match))
+	api.GET("/my/matches", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.MyMatches, "technician": matchingHandler.MyMatches}))
 	api.POST("/matches/:id/respond", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.Respond, "technician": matchingHandler.Respond}))
 	api.DELETE("/matches/:id/decline", authHandlerByRole(map[string]http.HandlerFunc{"isp": matchingHandler.Decline, "technician": matchingHandler.Decline}))
 
@@ -338,9 +359,9 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 
 	api.POST("/installations", authHandler("customer", client.CreateInstallation))
 	api.PUT("/installations/*path", authHandler("isp", ispEndpoints.UpdateInstallation))
-	api.GET("/my/jobs", authHandler("customer", client.GetJobs))
+	api.GET("/my/jobs", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetJobs, "isp": ispEndpoints.GetJobs}))
 	api.POST("/my/jobs", idempotentAuthHandler("customer", client.CreateJob, idempotencyStore))
-	api.GET("/my/jobs/:id", authHandler("customer", client.GetJobApplications))
+	api.GET("/my/jobs/:id", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetJobApplications, "isp": ispEndpoints.GetJob}))
 	api.PUT("/my/jobs/:id", authHandler("customer", client.AssignJob))
 	api.PATCH("/my/jobs/:id", authHandler("customer", client.SetJobAvailability))
 	api.DELETE("/my/jobs/:id", authHandler("customer", client.DeleteJob))
@@ -348,7 +369,7 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 
 	api.GET("/my/installations", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetInstallations, "isp": ispEndpoints.GetInstallations}))
 	api.GET("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetProfile, "isp": ispEndpoints.GetProfile, "technician": technician.GetProfile}))
-	api.PUT("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.UpdateProfile, "isp": ispEndpoints.UpdateProfile}))
+	api.PUT("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.UpdateProfile, "isp": ispEndpoints.UpdateProfile, "technician": client.UpdateProfile}))
 	api.DELETE("/my/profile", authHandler("customer", client.RequestDeleteProfile))
 	api.GET("/my/referrals", authHandler("customer", referralHandler.Summary))
 
@@ -359,8 +380,13 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.POST("/my/vacancies", authHandler("isp", vacancies.Create))
 	api.GET("/my/vacancies", authHandler("isp", vacancies.List))
 	api.DELETE("/my/vacancies/:id", authHandler("isp", vacancies.Close))
+	api.GET("/my/vacancies/:id/applications", authHandler("isp", vacancies.Applications))
+	api.PATCH("/my/vacancies/:id/applications/:application_id", authHandler("isp", vacancies.Decide))
 	api.POST("/vacancies/:id/apply", authHandler("technician", vacancies.Apply))
+	api.DELETE("/vacancies/:id/application", authHandler("technician", vacancies.Withdraw))
 	api.POST("/my/technician-work-requests", authHandler("isp", ispEndpoints.CreateTechnicianWorkRequest))
+	api.GET("/my/isp-jobs", authHandler("isp", ispEndpoints.GetJobs))
+	api.GET("/my/isp-jobs/:id", authHandler("isp", ispEndpoints.GetJob))
 	api.PUT("/my/requests/:id/assign-technician", authHandler("isp", ispEndpoints.AssignTechnician))
 	api.GET("/technicians/:id/profile", stdHandler(technician.GetPublicProfile))
 	api.GET("/technicians/:id/availability", stdHandler(availabilityHandler.Slots))
@@ -396,13 +422,15 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PUT("/my/notifications/:id", authHandler("isp", ispEndpoints.ReadNotification))
 	api.GET("/my/notifications/stream", authHandler("", ispEndpoints.StreamNotifications))
 	api.GET("/notifications", authHandler("", notificationsHandler.List))
+	api.GET("/notifications/unread-count", authHandler("", notificationsHandler.UnreadCount))
+	api.PUT("/notifications/read-all", authHandler("", notificationsHandler.ReadAll))
 	api.PUT("/notifications/:id/read", authHandler("", notificationsHandler.Read))
 	api.GET("/notifications/stream", authHandler("", notificationsHandler.Stream))
 	api.GET("/available-jobs", authHandlerByRole(map[string]http.HandlerFunc{"technician": technician.GetAvailableJobs, "isp": technician.GetAvailableJobs}))
 	api.GET("/my/technician-jobs", authHandler("technician", technician.GetJobs))
 	api.GET("/my/earnings", authHandler("technician", earningsHandler.Dashboard))
-	api.POST("/jobs/:id/apply", authHandler("", technician.ApplyToJob))
-	api.PUT("/jobs/:id", authHandler("", technician.UpdateJobStatus))
+	api.POST("/jobs/:id/apply", authHandlerByRole(map[string]http.HandlerFunc{"isp": technician.ApplyToJob, "technician": technician.ApplyToJob}))
+	api.PUT("/jobs/:id", authHandlerByRole(map[string]http.HandlerFunc{"isp": technician.UpdateJobStatus, "technician": technician.UpdateJobStatus}))
 	api.GET("/jobs/:id/stream", authHandler("", realtimeHandler.JobStream))
 	api.GET("/jobs/:id/events", authHandler("", realtimeHandler.Events))
 	api.GET("/jobs/:id/location", authHandler("", realtimeHandler.GetLocation))
@@ -421,6 +449,11 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PATCH("/warranty-claims/:id", authHandlerByRole(map[string]http.HandlerFunc{"isp": warrantyHandler.Resolve, "technician": warrantyHandler.Resolve}))
 
 	api.GET("/admin/deletion-requests", authHandler("admin", admin.GetDeletionRequests))
+	api.POST("/admin/users", authHandler("admin", admin.CreateUser))
+	api.GET("/admin/users", authHandler("admin", admin.ListUsers))
+	api.PATCH("/admin/users/:id", authHandler("admin", admin.UpdateUser))
+	api.GET("/admin/settlements/outbox", authHandler("admin", admin.SettlementOutbox))
+	api.POST("/admin/settlements/outbox/:id/retry", authHandler("admin", admin.RetrySettlement))
 	api.GET("/admin/tax-rates", authHandler("admin", admin.TaxRates))
 	api.POST("/admin/tax-rates", authHandler("admin", admin.CreateTaxRate))
 	api.POST("/admin/system-units", authHandler("admin", admin.CreateSystemUnit))
