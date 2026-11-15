@@ -224,6 +224,46 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	billingRepo, err := postgres.NewBillingRepository()
+	if err != nil {
+		t.Fatal(err)
+	}
+	billing := &models.BillingSystem{Name: "CI Billing", Slug: "ci-billing-" + strings.ReplaceAll(uuid.NewString(), "-", ""), OwnerCompany: "CI ISP", WebsiteURL: "https://example.com", LoginURL: "https://example.com/login", ReferralURL: "https://example.com/referral", Status: "active", CreatedAt: now, UpdatedAt: now}
+	if err := billingRepo.Create(context.Background(), billing, ispID); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := billingRepo.Manager(context.Background(), billing.ID, ispID)
+	if err != nil || !manager {
+		t.Fatal(err)
+	}
+	price := 100.0
+	billing.Pricing = append(billing.Pricing, &models.BillingPrice{ServiceType: "hotspot", Currency: "KES", BillingPeriod: "monthly", Amount: &price, SetupFee: 0, Available: true})
+	if err := billingRepo.UpsertPricing(context.Background(), billing.ID, ispID, billing.Pricing, now); err != nil {
+		t.Fatal(err)
+	}
+	review := &models.BillingReview{BillingSystemID: billing.ID, ReviewerID: customer, Reliability: 5, EaseOfUse: 4, Support: 4, Features: 5, ValueForMoney: 4, Comment: "works", UseVerified: true}
+	if err := billingRepo.CreateReview(context.Background(), review); err != nil {
+		t.Fatal(err)
+	}
+	reviews, total, err := billingRepo.Reviews(context.Background(), billing.ID, 10, 0)
+	if err != nil || total != 1 || len(reviews) != 1 {
+		t.Fatalf("billing reviews: %#v %d %v", reviews, total, err)
+	}
+	flag := &models.BillingFlag{BillingSystemID: billing.ID, ReporterID: customer, Reason: "test flag", Details: "details"}
+	if err := billingRepo.Flag(context.Background(), flag); err != nil {
+		t.Fatal(err)
+	}
+	flags, err := billingRepo.ListFlags(context.Background(), "open", 10)
+	if err != nil || len(flags) == 0 {
+		t.Fatalf("billing flags: %#v %v", flags, err)
+	}
+	claim := &models.BillingClaim{BillingSystemID: billing.ID, ClaimantID: customer, Evidence: "evidence"}
+	if err := billingRepo.Claim(context.Background(), claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := billingRepo.ResolveClaim(context.Background(), claim.ID, ispID, "approved"); err != nil {
+		t.Fatal(err)
+	}
 	social := socialsvc.NewService(socialRepo)
 	if created, err := social.Favorite(context.Background(), customer, "isp", ispID); err != nil || !created {
 		t.Fatalf("favorite failed: %v %v", created, err)
@@ -244,3 +284,5 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 		t.Fatalf("device registration: %#v %v", device, err)
 	}
 }
+
+func ptrFloat(v float64) *float64 { return &v }

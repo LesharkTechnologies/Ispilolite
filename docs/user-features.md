@@ -133,7 +133,7 @@ contains `/documents/{id}/download` when generation succeeds.
 
 ## Migrations
 
-Run migrations `0020` through `0035` before deploying the updated API:
+Run migrations `0020` through `0036` before deploying the updated API:
 
 ```bash
 go run ./cmd/migrate

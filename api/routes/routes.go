@@ -122,6 +122,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	billing, err := handlers.NewBillingHandler()
+	if err != nil {
+		return nil, nil, err
+	}
 	geoRepo, err := postgres.NewGeospatialRepository()
 	if err != nil {
 		return nil, nil, err
@@ -479,6 +483,23 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PATCH("/warranty-claims/:id", authHandlerByRole(map[string]http.HandlerFunc{"isp": warrantyHandler.Resolve, "technician": warrantyHandler.Resolve}))
 
 	api.GET("/admin/deletion-requests", authHandler("admin", admin.GetDeletionRequests))
+	api.GET("/billing-systems", stdHandler(billing.List))
+	api.GET("/billing-systems/:id", stdHandler(billing.Get))
+	api.POST("/billing-systems", authHandler("", billing.Create))
+	api.PUT("/billing-systems/:id", authHandler("", billing.Update))
+	api.POST("/billing-systems/:id/archive", authHandler("", billing.Archive))
+	api.GET("/billing-systems/:id/pricing", stdHandler(billing.Pricing))
+	api.PUT("/billing-systems/:id/pricing", authHandler("", billing.UpsertPricing))
+	api.GET("/billing-systems/:id/reviews", stdHandler(billing.Reviews))
+	api.POST("/billing-systems/:id/reviews", authHandler("", billing.CreateReview))
+	api.POST("/billing-systems/:id/reviews/:review_id/reply", authHandler("", billing.ReplyReview))
+	api.POST("/billing-systems/:id/flags", authHandler("", billing.Flag))
+	api.POST("/billing-systems/:id/claims", authHandler("", billing.Claim))
+	api.PUT("/billing-systems/:id/verification", authHandler("admin", billing.Verify))
+	api.GET("/admin/billing-flags", authHandler("admin", billing.AdminFlags))
+	api.PATCH("/admin/billing-flags/:id", authHandler("admin", billing.ResolveFlag))
+	api.GET("/admin/billing-claims", authHandler("admin", billing.AdminClaims))
+	api.PATCH("/admin/billing-claims/:id", authHandler("admin", billing.ResolveClaim))
 	api.POST("/admin/users", authHandler("admin", admin.CreateUser))
 	api.GET("/admin/users", authHandler("admin", admin.ListUsers))
 	api.PATCH("/admin/users/:id", authHandler("admin", admin.UpdateUser))
