@@ -30,6 +30,13 @@ func (s *Service) Add(ispID, locationID string) error {
 	return s.coverage.AddISPCoverage(ispID, locationID)
 }
 
+func (s *Service) Remove(ispID, locationID string) error {
+	if strings.TrimSpace(locationID) == "" {
+		return fmt.Errorf("location id is required")
+	}
+	return s.coverage.RemoveISPCoverage(ispID, strings.TrimSpace(locationID))
+}
+
 func (s *Service) Recommendations(ispID, county string, limit int) ([]*models.Location, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10

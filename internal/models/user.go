@@ -43,6 +43,8 @@ type User struct {
 	ReferredByCode      string       `json:"-" db:"-"`
 	CreditBalance       float64      `json:"credit_balance" db:"credit_balance"`
 	Locale              string       `json:"locale" db:"locale"`
+	DeletedAt           *time.Time   `json:"deleted_at,omitempty" db:"deleted_at"`
+	RetentionUntil      *time.Time   `json:"retention_until,omitempty" db:"retention_until"`
 }
 
 type Referral struct {

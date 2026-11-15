@@ -71,3 +71,27 @@ func (h *ChatHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "messages marked read"})
 }
+
+func (h *ChatHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	messageID := pathParam(r.URL.Path, "/api/v1/jobs/messages/")
+	if messageID == "" {
+		messageID = pathParam(r.URL.Path, "/api/v1/chat/messages/")
+	}
+	if messageID == "" {
+		messageID = pathParam(r.URL.Path, "/api/v1/messages/")
+	}
+	if messageID == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "message id is required")
+		return
+	}
+	err := h.service.Delete(r.Context(), messageID, userIDFromContext(r.Context()), userRoleFromContext(r.Context()))
+	if err != nil {
+		if errors.Is(err, chatsvc.ErrForbidden) {
+			respondWithErrorRaw(w, http.StatusNotFound, "message not found or permission denied")
+			return
+		}
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "message deleted"})
+}

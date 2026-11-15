@@ -18,6 +18,7 @@ type Repository interface {
 	ReplaceRules(context.Context, string, []*models.AvailabilityRule) error
 	Rules(context.Context, string) ([]*models.AvailabilityRule, error)
 	UpsertException(context.Context, *models.AvailabilityException) error
+	DeleteException(context.Context, string, string) error
 	Exceptions(context.Context, string, time.Time, time.Time) ([]*models.AvailabilityException, error)
 	BusyTimes(context.Context, string, time.Time, time.Time) ([]time.Time, error)
 }
@@ -79,6 +80,10 @@ func (s *Service) AddException(ctx context.Context, technicianID string, item *m
 		return nil, err
 	}
 	return item, nil
+}
+
+func (s *Service) DeleteException(ctx context.Context, technicianID, dateOrID string) error {
+	return s.repo.DeleteException(ctx, technicianID, strings.TrimSpace(dateOrID))
 }
 
 func (s *Service) Slots(ctx context.Context, technicianID string, from, to time.Time, durationMinutes int) ([]*models.BookableSlot, error) {

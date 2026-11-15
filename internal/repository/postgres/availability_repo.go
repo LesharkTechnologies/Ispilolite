@@ -84,6 +84,18 @@ func (r *AvailabilityRepository) UpsertException(ctx context.Context, item *mode
 	return err
 }
 
+func (r *AvailabilityRepository) DeleteException(ctx context.Context, technicianID, dateOrID string) error {
+	res, err := r.writer.ExecContext(ctx, `DELETE FROM technician_availability_exceptions WHERE technician_id=$1 AND (id::text=$2 OR to_char(exception_date,'YYYY-MM-DD')=$2)`, technicianID, dateOrID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r *AvailabilityRepository) Exceptions(ctx context.Context, technicianID string, from, to time.Time) ([]*models.AvailabilityException, error) {
 	rows, err := r.reader.QueryContext(ctx, `SELECT id,technician_id,to_char(exception_date,'YYYY-MM-DD'),available,
 		COALESCE(to_char(start_time,'HH24:MI'),''),COALESCE(to_char(end_time,'HH24:MI'),''),reason,created_at

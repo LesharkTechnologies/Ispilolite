@@ -122,3 +122,24 @@ func (r *ChatRepository) Participants(ctx context.Context, jobID, userID string)
 	}
 	return out, nil
 }
+
+func (r *ChatRepository) Delete(ctx context.Context, messageID, userID string, isAdmin bool) error {
+	var result sql.Result
+	var err error
+	if isAdmin {
+		result, err = r.writer.ExecContext(ctx, `UPDATE job_messages SET deleted_at=now() WHERE id=$1 AND deleted_at IS NULL`, messageID)
+	} else {
+		result, err = r.writer.ExecContext(ctx, `UPDATE job_messages SET deleted_at=now() WHERE id=$1 AND sender_id=$2 AND deleted_at IS NULL`, messageID, userID)
+	}
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

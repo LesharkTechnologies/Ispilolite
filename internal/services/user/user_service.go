@@ -20,3 +20,4 @@ func (s *UserService) RequestDeleteUser(id, status string) error {
 	return s.repo.RequestDeleteUser(id, status)
 }
 func (s *UserService) SanitizeAndDeleteUser(id string) error { return s.repo.SanitizeAndDeleteUser(id) }
+func (s *UserService) PurgeExpiredUsers() (int64, error)     { return s.repo.PurgeExpiredUsers() }

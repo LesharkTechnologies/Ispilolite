@@ -140,4 +140,41 @@ func (r *DisputeRepository) Resolve(ctx context.Context, id, adminID, resolution
 	return tx.Commit()
 }
 
+func (r *DisputeRepository) Withdraw(ctx context.Context, id, userID, role string) error {
+	tx, err := r.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var escrowID sql.NullString
+	var row *sql.Row
+	if role == "admin" {
+		row = tx.QueryRowContext(ctx, `SELECT COALESCE(escrow_id::text,'') FROM disputes WHERE id=$1 AND status IN ('open','under_review') FOR UPDATE`, id)
+	} else {
+		row = tx.QueryRowContext(ctx, `SELECT COALESCE(escrow_id::text,'') FROM disputes WHERE id=$1 AND opened_by=$2 AND status IN ('open','under_review') FOR UPDATE`, id, userID)
+	}
+	if err := row.Scan(&escrowID); err != nil {
+		return err
+	}
+
+	if role == "admin" {
+		_, err = tx.ExecContext(ctx, `UPDATE disputes SET status='cancelled', updated_at=now() WHERE id=$1`, id)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE disputes SET status='cancelled', updated_at=now() WHERE id=$1 AND opened_by=$2`, id, userID)
+	}
+	if err != nil {
+		return err
+	}
+
+	if escrowID.Valid && escrowID.String != "" {
+		_, err = tx.ExecContext(ctx, `UPDATE escrows SET status='held', updated_at=now() WHERE id=$1 AND status='disputed'`, escrowID.String)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 var _ = time.Now

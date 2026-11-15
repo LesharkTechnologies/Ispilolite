@@ -62,6 +62,11 @@ func (m *MockUserRepository) SanitizeAndDeleteUser(userID string) error {
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) PurgeExpiredUsers() (int64, error) {
+	args := m.Called()
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func TestUserService_RequestDeleteUser(t *testing.T) {
 	mockRepo := new(MockUserRepository)
 	userService := NewUserService(mockRepo)

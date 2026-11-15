@@ -81,6 +81,48 @@ func (r *technicianRepo) GetCompanyLinks(id string) ([]map[string]interface{}, e
 	}
 	return out, rows.Err()
 }
+func (r *technicianRepo) AddSkill(id, skill string) error {
+	skill = strings.TrimSpace(skill)
+	if skill == "" {
+		return sql.ErrNoRows
+	}
+	tx, err := r.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='technician' AND status='active')`, id).Scan(&exists); err != nil || !exists {
+		return sql.ErrNoRows
+	}
+	if _, err = tx.Exec(`INSERT INTO technician_profile_skills(technician_id,skill) VALUES($1,$2) ON CONFLICT DO NOTHING`, id, skill); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO technician_skills(technician_id,skill) SELECT id,$2 FROM technicians WHERE id=$1 OR user_id=$1 ON CONFLICT DO NOTHING`, id, skill); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *technicianRepo) RemoveSkill(id, skill string) error {
+	skill = strings.TrimSpace(skill)
+	if skill == "" {
+		return sql.ErrNoRows
+	}
+	tx, err := r.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM technician_profile_skills WHERE technician_id=$1 AND skill=$2`, id, skill); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM technician_skills WHERE technician_id IN (SELECT id FROM technicians WHERE id=$1 OR user_id=$1) AND skill=$2`, id, skill); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (r *technicianRepo) SetSkills(id string, skills []string) error {
 	p, err := r.GetProfile(id)
 	if err != nil {
@@ -133,6 +175,17 @@ func (r *technicianRepo) CreatePost(p *models.TechnicianPost) error {
 func (r *technicianRepo) UpdatePost(p *models.TechnicianPost) error {
 	media, _ := json.Marshal(p.MediaURLs)
 	res, err := r.writer.Exec(`UPDATE technician_posts SET title=$1,description=$2,service_type=$3,media_urls=$4,status=$5,updated_at=now() WHERE id=$6 AND technician_id=$7`, p.Title, p.Description, p.ServiceType, media, p.Status, p.ID, p.TechnicianID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+func (r *technicianRepo) DeletePost(postID, technicianID string) error {
+	res, err := r.writer.Exec(`DELETE FROM technician_posts WHERE id=$1 AND technician_id=$2`, postID, technicianID)
 	if err != nil {
 		return err
 	}

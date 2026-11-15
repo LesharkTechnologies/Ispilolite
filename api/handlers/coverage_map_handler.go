@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"ispilolite/api/dto"
 	"ispilolite/internal/models"
 	coveragemapsvc "ispilolite/internal/services/coveragemap"
@@ -45,4 +47,32 @@ func (h *CoverageMapHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: items})
+}
+
+func (h *CoverageMapHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/coverage/polygons/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/my/coverage/polygons/")
+	}
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/admin/coverage/polygons/")
+	}
+	if id == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "polygon id is required")
+		return
+	}
+	role := userRoleFromContext(r.Context())
+	ispID := userIDFromContext(r.Context())
+	if role == "admin" {
+		ispID = ""
+	}
+	if err := h.service.Delete(r.Context(), id, ispID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithErrorRaw(w, http.StatusNotFound, "coverage polygon not found")
+			return
+		}
+		respondWithErrorRaw(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "coverage polygon deleted"})
 }

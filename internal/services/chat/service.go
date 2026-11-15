@@ -24,6 +24,7 @@ type Repository interface {
 	List(context.Context, string, string, time.Time, int) ([]*models.ChatMessage, error)
 	MarkRead(context.Context, string, string) error
 	Participants(context.Context, string, string) ([]string, error)
+	Delete(context.Context, string, string, bool) error
 }
 
 type Service struct {
@@ -100,4 +101,19 @@ func (s *Service) MarkRead(ctx context.Context, jobID, userID string) error {
 		return err
 	}
 	return s.repo.MarkRead(ctx, jobID, userID)
+}
+
+func (s *Service) Delete(ctx context.Context, messageID, userID, role string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ErrInvalid
+	}
+	isAdmin := role == "admin"
+	if err := s.repo.Delete(ctx, messageID, userID, isAdmin); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrForbidden
+		}
+		return err
+	}
+	return nil
 }

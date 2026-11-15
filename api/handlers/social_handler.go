@@ -145,14 +145,21 @@ func (h *SocialHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: item})
 }
 func (h *SocialHandler) RemoveDevice(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Token string `json:"token"`
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		token = pathParam(r.URL.Path, "/api/v1/my/devices/")
 	}
-	if decodeJSON(w, r, &input) != nil {
-		respondWithError(w, 400, "invalid device token")
-		return
+	if token == "" {
+		var input struct {
+			Token string `json:"token"`
+		}
+		if decodeJSON(w, r, &input) != nil || strings.TrimSpace(input.Token) == "" {
+			respondWithError(w, 400, "invalid device token")
+			return
+		}
+		token = strings.TrimSpace(input.Token)
 	}
-	if err := h.service.RemoveDevice(r.Context(), userIDFromContext(r.Context()), input.Token); err != nil {
+	if err := h.service.RemoveDevice(r.Context(), userIDFromContext(r.Context()), token); err != nil {
 		socialError(w, err)
 		return
 	}

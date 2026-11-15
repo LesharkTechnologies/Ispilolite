@@ -40,21 +40,52 @@ func (r *userRepo) RefreshSessionActive(sessionID, tokenHash string) (bool, erro
 	return ok, err
 }
 func (r *userRepo) SanitizeAndDeleteUser(userID string) error {
+	// In accordance with Kenya Data Protection Act 2019 (KDPA) Section 39 & 40,
+	// telecommunications regulations, and financial audit laws:
+	// 1. Soft-delete user account with status='deleted' and a 2-year statutory retention period.
+	// 2. Identity, skills, and transaction history are PRESERVED in the DB for 2 years.
+	// 3. Immediately cut off all consumer access, revoke active sessions, and hide from search.
+	now := time.Now().UTC()
+	retentionUntil := now.AddDate(2, 0, 0)
 	query := `
 		UPDATE users
 		SET status = 'deleted',
+			deleted_at = $1,
+			retention_until = $2,
+			updated_at = $1
+		WHERE id = $3
+	`
+	if _, err := r.dbWriter.Exec(query, now, retentionUntil, userID); err != nil {
+		return err
+	}
+	_, _ = r.dbWriter.Exec(`UPDATE technicians SET is_available = false WHERE id = $1 OR user_id = $1`, userID)
+	_, _ = r.dbWriter.Exec(`UPDATE technician_profiles SET is_available = false WHERE technician_id = $1`, userID)
+	_, _ = r.dbWriter.Exec(`UPDATE isps SET is_active = false WHERE id = $1`, userID)
+	return r.RevokeAllRefreshSessions(userID)
+}
+
+func (r *userRepo) PurgeExpiredUsers() (int64, error) {
+	// Statutory retention period has elapsed (2 years post-deletion).
+	// Anonymize personal identifiers to comply with KDPA erasure requirements.
+	now := time.Now().UTC()
+	query := `
+		UPDATE users
+		SET phone = 'deleted-' || id::text,
+			username = '',
 			name = 'Deleted User',
 			email = '',
-			phone = '',
-			username = '',
 			password_hash = '',
 			latitude = NULL,
 			longitude = NULL,
+			avatar_url = '',
 			updated_at = $1
-		WHERE id = $2
+		WHERE status = 'deleted' AND retention_until IS NOT NULL AND retention_until <= $1
 	`
-	_, err := r.dbWriter.Exec(query, time.Now().UTC(), userID)
-	return err
+	res, err := r.dbWriter.Exec(query, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *userRepo) RevokeAllRefreshSessions(userID string) error {
@@ -441,11 +472,24 @@ func (r *userRepo) GetTechniciansByISPID(ispID string) ([]*models.User, error) {
 }
 
 func (r *userRepo) RequestDeleteUser(userID string, status string) error {
+	now := time.Now().UTC()
+	retentionUntil := now.AddDate(2, 0, 0)
 	query := `
 		UPDATE users
-		SET status = $1, updated_at = $2
-		WHERE id = $3
+		SET status = $1,
+			deleted_at = CASE WHEN $1 = 'deleted' THEN $2 ELSE deleted_at END,
+			retention_until = CASE WHEN $1 = 'deleted' THEN $3 ELSE retention_until END,
+			updated_at = $2
+		WHERE id = $4
 	`
-	_, err := r.dbWriter.Exec(query, status, time.Now().UTC(), userID)
-	return err
+	if _, err := r.dbWriter.Exec(query, status, now, retentionUntil, userID); err != nil {
+		return err
+	}
+	if status == "deleted" {
+		_, _ = r.dbWriter.Exec(`UPDATE technicians SET is_available = false WHERE id = $1 OR user_id = $1`, userID)
+		_, _ = r.dbWriter.Exec(`UPDATE technician_profiles SET is_available = false WHERE technician_id = $1`, userID)
+		_, _ = r.dbWriter.Exec(`UPDATE isps SET is_active = false WHERE id = $1`, userID)
+		return r.RevokeAllRefreshSessions(userID)
+	}
+	return nil
 }

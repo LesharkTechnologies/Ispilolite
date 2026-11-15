@@ -16,6 +16,7 @@ type UserRepository interface {
 	ListUsersForMessaging(role string, userIDs []string) ([]*models.User, error)
 	RequestDeleteUser(userID string, status string) error
 	SanitizeAndDeleteUser(userID string) error
+	PurgeExpiredUsers() (int64, error)
 	CreateRefreshSession(sessionID, userID, tokenHash string, expiresAt time.Time) error
 	RefreshSessionActive(sessionID, tokenHash string) (bool, error)
 	RevokeAllRefreshSessions(userID string) error
@@ -47,6 +48,7 @@ type ISPRepository interface {
 type ReviewRepository interface {
 	CreateReview(review *models.Review) error
 	GetReviewsByTarget(targetID string, targetType string) ([]*models.Review, error)
+	DeleteReview(reviewID, userID string) error
 	AnonymizeReviewsByUserID(userID string) error
 	ReportReview(report *models.ReviewReport) error
 	ModerateReview(reviewID, adminID, status, note string) error
@@ -71,9 +73,12 @@ type TechnicianRepository interface {
 	GetProfile(technicianID string) (*models.TechnicianProfile, error)
 	SetSkills(technicianID string, skills []string) error
 	GetSkills(technicianID string) ([]string, error)
+	AddSkill(technicianID, skill string) error
+	RemoveSkill(technicianID, skill string) error
 	SearchTechnicians(skill string, availableOnly bool, limit int) ([]*models.TechnicianProfile, error)
 	CreatePost(post *models.TechnicianPost) error
 	UpdatePost(post *models.TechnicianPost) error
+	DeletePost(postID, technicianID string) error
 	GetPostByID(postID string) (*models.TechnicianPost, error)
 	GetPostsByTechnician(technicianID string) ([]*models.TechnicianPost, error)
 	ListPublishedPosts(serviceType string, limit int) ([]*models.TechnicianPost, error)
@@ -135,6 +140,7 @@ type LocationRepository interface {
 type CoverageRepository interface {
 	ListISPCoverage(ispID, county string) ([]*models.Location, error)
 	AddISPCoverage(ispID, locationID string) error
+	RemoveISPCoverage(ispID, locationID string) error
 	ListCoverageRecommendations(ispID, county string, limit int) ([]*models.Location, error)
 }
 
@@ -142,6 +148,8 @@ type NotificationRepository interface {
 	CreateNotification(notification *models.Notification) error
 	ListNotifications(userID string, unreadOnly bool, limit int) ([]*models.Notification, error)
 	MarkNotificationRead(userID, notificationID string) error
+	DeleteNotification(userID, notificationID string) error
+	ClearNotifications(userID string) (int64, error)
 }
 
 type QuotationRepository interface {

@@ -215,21 +215,96 @@ func (h *AdminHandler) ApproveDeletion(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID string `json:"user_id"`
 	}
-	if decodeJSON(w, r, &req) != nil || req.UserID == "" {
+	userID := pathParam(r.URL.Path, "/api/v1/admin/users/")
+	if userID == "" {
+		userID = pathParam(r.URL.Path, "/api/v1/admin/deletion-requests/")
+	}
+	if userID == "" && r.Body != nil {
+		_ = decodeJSON(w, r, &req)
+		userID = req.UserID
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
 		respondWithError(w, 400, "user_id is required")
 		return
 	}
-	res, err := h.db.ExecContext(r.Context(), `UPDATE users SET phone='deleted-'||id::text,username='',name='Deleted user',email='',password_hash='',status='deleted',updated_at=now() WHERE id=$1 AND status='deletion_requested'`, req.UserID)
+	// Under Kenya Data Protection Act 2019 (KDPA) Sec 39 & 40 and statutory audit laws,
+	// user data is preserved in the database for 2 years while consumer visibility/access
+	// is immediately revoked.
+	res, err := h.db.ExecContext(r.Context(), `
+		UPDATE users 
+		SET status='deleted', 
+			deleted_at=now(), 
+			retention_until=now() + INTERVAL '2 years', 
+			updated_at=now() 
+		WHERE id=$1 AND (status='deletion_requested' OR status != 'deleted')`, userID)
 	if err != nil {
 		respondWithError(w, 500, "failed to approve deletion")
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		respondWithError(w, 404, "deletion request not found")
+		respondWithError(w, 404, "deletion request or user not found")
 		return
 	}
-	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "user data sanitized"})
+	// Immediately revoke all auth sessions and hide from public listings
+	_, _ = h.db.ExecContext(r.Context(), `UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, userID)
+	_, _ = h.db.ExecContext(r.Context(), `UPDATE technicians SET is_available=false WHERE id=$1 OR user_id=$1`, userID)
+	_, _ = h.db.ExecContext(r.Context(), `UPDATE technician_profiles SET is_available=false WHERE technician_id=$1`, userID)
+	_, _ = h.db.ExecContext(r.Context(), `UPDATE isps SET is_active=false WHERE id=$1`, userID)
+
+	respondWithJSON(w, 200, dto.APIResponse{
+		Success: true,
+		Message: "account soft-deleted; consumer access revoked and data retained for 2 years per KDPA 2019",
+	})
+}
+
+// PurgeExpiredRetention anonymizes user personal data after the 2-year KDPA retention window.
+func (h *AdminHandler) PurgeExpiredRetention(w http.ResponseWriter, r *http.Request) {
+	res, err := h.db.ExecContext(r.Context(), `
+		UPDATE users
+		SET phone='deleted-'||id::text,
+			username='',
+			name='Deleted User',
+			email='',
+			password_hash='',
+			latitude=NULL,
+			longitude=NULL,
+			avatar_url='',
+			updated_at=now()
+		WHERE status='deleted' AND retention_until IS NOT NULL AND retention_until <= now()
+	`)
+	if err != nil {
+		respondWithError(w, 500, "failed to purge expired retention records")
+		return
+	}
+	count, _ := res.RowsAffected()
+	respondWithJSON(w, 200, dto.APIResponse{
+		Success: true,
+		Data:    map[string]int64{"purged": count},
+	})
+}
+
+func (h *AdminHandler) DeleteTaxRate(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/tax-rates/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/admin/tax-rates/")
+	}
+	if id == "" {
+		respondWithError(w, 400, "tax rate id is required")
+		return
+	}
+	res, err := h.db.ExecContext(r.Context(), `UPDATE tax_rates SET is_active=false WHERE id=$1`, id)
+	if err != nil {
+		respondWithError(w, 500, "failed to delete tax rate")
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		respondWithError(w, 404, "tax rate not found")
+		return
+	}
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "tax rate deleted"})
 }
 
 func (h *AdminHandler) TaxRates(w http.ResponseWriter, r *http.Request) {

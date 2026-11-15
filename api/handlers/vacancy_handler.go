@@ -118,6 +118,11 @@ func (h *VacancyHandler) Decide(w http.ResponseWriter, r *http.Request) {
 func (h *VacancyHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r.URL.Path, "/api/v1/vacancies/")
 	id = strings.TrimSuffix(id, "/application")
+	id = strings.TrimSuffix(id, "/apply")
+	if id == "" {
+		respondWithError(w, 400, "vacancy id is required")
+		return
+	}
 	if err := h.repo.Withdraw(id, userIDFromContext(r.Context())); err != nil {
 		respondWithError(w, 404, "pending application not found")
 		return

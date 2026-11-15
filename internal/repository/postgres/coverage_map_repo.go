@@ -52,3 +52,24 @@ func (r *CoverageMapRepository) List(ctx context.Context, ispID, county string, 
 	}
 	return items, rows.Err()
 }
+
+func (r *CoverageMapRepository) Delete(ctx context.Context, id, ispID string) error {
+	var result sql.Result
+	var err error
+	if ispID == "" {
+		result, err = r.writer.ExecContext(ctx, `UPDATE isp_coverage_polygons SET active=false, updated_at=NOW() WHERE id=$1 AND active=true`, id)
+	} else {
+		result, err = r.writer.ExecContext(ctx, `UPDATE isp_coverage_polygons SET active=false, updated_at=NOW() WHERE id=$1 AND isp_id=$2::uuid AND active=true`, id, ispID)
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

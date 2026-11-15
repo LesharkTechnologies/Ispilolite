@@ -15,6 +15,9 @@ type Service struct {
 }
 
 func NewService(r repository.TechnicianRepository) *Service { return &Service{r} }
+func (s *Service) AddSkill(id, skill string) error          { return s.repo.AddSkill(id, skill) }
+func (s *Service) RemoveSkill(id, skill string) error       { return s.repo.RemoveSkill(id, skill) }
+func (s *Service) GetSkills(id string) ([]string, error)    { return s.repo.GetSkills(id) }
 func (s *Service) UpsertProfile(id string, p *models.TechnicianProfile) error {
 	p.TechnicianID = id
 	p.Bio = strings.TrimSpace(p.Bio)
@@ -75,6 +78,9 @@ func (s *Service) UpdatePost(id, owner string, p *models.TechnicianPost) (*model
 		return nil, err
 	}
 	return s.repo.GetPostByID(id)
+}
+func (s *Service) DeletePost(id, owner string) error {
+	return s.repo.DeletePost(id, owner)
 }
 func (s *Service) Portfolio(id string) ([]*models.TechnicianPost, error) {
 	items, err := s.repo.GetPostsByTechnician(id)

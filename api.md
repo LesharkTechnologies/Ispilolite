@@ -173,6 +173,34 @@ accepts `status` (`active` or `suspended`) and/or `is_verified`; suspending an
 account revokes refresh sessions, and access middleware rejects its existing
 access tokens immediately.
 
+### Chat messages and Job communication
+
+```http
+GET    /jobs/:id/messages?before=&limit=50
+POST   /jobs/:id/messages
+POST   /jobs/:id/messages/read
+DELETE /jobs/messages/:id
+DELETE /chat/messages/:id
+```
+
+Participants (customer, ISP, assigned technician) can send messages and attachments. Calling `DELETE /jobs/messages/:id` marks the message soft-deleted (`deleted_at = NOW()`), hiding it from the conversation while retaining the record for KDPA and legal compliance. Admins may delete any message.
+
+### Dispute resolution and Escrow
+
+```http
+POST   /jobs/:id/disputes
+GET    /disputes/:id
+POST   /disputes/:id/comments
+DELETE /disputes/:id
+POST   /disputes/:id/withdraw
+POST   /disputes/:id/cancel
+GET    /admin/disputes?status=&limit=50
+PATCH  /admin/disputes/:id
+DELETE /admin/disputes/:id
+```
+
+When an escrow is disputed, its status transitions to `disputed`. Users who opened the dispute can withdraw or cancel it with `DELETE /disputes/:id` or `POST /disputes/:id/withdraw`, which restores escrow status to `held` and updates dispute status to `cancelled`. Admins can resolve disputes (`PATCH /admin/disputes/:id` with resolution `release` or `refund`) or cancel them with `DELETE /admin/disputes/:id`.
+
 ## User follows (customer, technician, ISP)
 
 Following is social only: it does not hire a technician, add them to an ISP,
@@ -241,6 +269,15 @@ Payload:
 ```
 
 Rates must be between `0` and `100`. Creating a default rate clears the previous default.
+
+Delete tax rate:
+
+```http
+DELETE /tax-rates/{id}
+DELETE /admin/tax-rates/{id}
+```
+
+Deactivates the tax rate so it is excluded from future quotations while preserving historic audit integrity.
 
 ## Admin system units
 
@@ -319,14 +356,20 @@ rejected
 suspended
 ```
 
-## Deletion requests
+## Deletion requests and KDPA 2-year statutory retention
+
+According to the Kenya Data Protection Act, 2019 (KDPA) and telecommunications/financial compliance regulations, user data must be retained for 2 years following account closure for statutory audit purposes, while becoming immediately invisible across the consumer application (blocking login, profile access, and public searches).
 
 ```http
-GET  /admin/deletion-requests
-POST /admin/approve-deletion
+GET    /admin/deletion-requests
+POST   /admin/approve-deletion
+DELETE /admin/deletion-requests/{user_id}
+DELETE /admin/users/{user_id}
+POST   /admin/retention/purge-expired
+DELETE /admin/retention/expired
 ```
 
-Approve payload:
+Approve payload (when using `POST /admin/approve-deletion`):
 
 ```json
 {
@@ -334,7 +377,14 @@ Approve payload:
 }
 ```
 
-Approval sanitizes account data and marks the account deleted.
+Alternatively, sending `DELETE /admin/users/{user_id}` or `DELETE /admin/deletion-requests/{user_id}` directly triggers the KDPA-compliant retention lifecycle:
+- Status is set to `'deleted'`.
+- `deleted_at` is stamped with the current time.
+- `retention_until` is set to `NOW() + INTERVAL '2 years'`.
+- All active JWT refresh sessions are immediately revoked.
+- Technician availability and ISP active status are set to false, preventing any consumer discovery or bookings.
+- User skills, names, phones, emails, and transaction histories are preserved in the DB for statutory audit, completely invisible on consumer endpoints.
+- After the 2-year window, `POST /admin/retention/purge-expired` or `DELETE /admin/retention/expired` executes the final automated scrubbing of expired PII.
 
 ## Audit logs
 
@@ -416,6 +466,7 @@ GET /isps/{isp_id}/packages
 GET /isps/{isp_id}/reviews
 GET /my/profile
 PUT /my/profile
+DELETE /my/profile
 ```
 
 Link an existing technician:
@@ -435,16 +486,21 @@ Response includes the stable company number:
 }
 ```
 
-List company technicians:
+List company technicians and assigned technicians:
 
 ```http
 GET /my/technicians
+GET /my/technicians/direct
+GET /my/technicians/all
 ```
 
-End a company relationship:
+End a company relationship or remove technician:
 
 ```http
-POST /my/technicians/{technician_id}/end
+POST   /my/technicians/{technician_id}/end
+DELETE /my/technicians/{technician_id}/link
+DELETE /my/technicians/{technician_id}
+DELETE /technicians/{technician_id}
 ```
 
 The technician remains a user and can work independently after the company link ends.
@@ -514,7 +570,9 @@ POST   /my/packages
 PUT    /packages/{package_id}
 PUT    /packages/{package_id}/prices
 POST   /packages/{package_id}/archive
+POST   /my/packages/{package_id}/archive
 DELETE /packages/{package_id}
+DELETE /my/packages/{package_id}
 ```
 
 Package payload:
@@ -538,11 +596,16 @@ Package payload:
 ## ISP subscriptions and coverage
 
 ```http
-GET  /my/subscriptions
-PUT  /subscriptions/{subscription_id}
-GET  /my/coverage
-POST /my/coverage
-GET  /my/coverage/recommendations
+GET    /my/subscriptions
+PUT    /subscriptions/{subscription_id}
+GET    /my/coverage
+POST   /my/coverage
+DELETE /my/coverage/areas/{location_id}
+POST   /my/coverage/polygons
+DELETE /my/coverage/polygons/{polygon_id}
+DELETE /coverage/polygons/{polygon_id}
+DELETE /admin/coverage/polygons/{polygon_id}
+GET    /my/coverage/recommendations
 ```
 
 Subscription status payload:
@@ -563,13 +626,27 @@ Technician endpoints require a `technician` JWT unless marked public.
 ## Technician profile and portfolio
 
 ```http
-GET /technicians/{technician_id}/profile
-GET /technicians/{technician_id}/reviews
-GET /technicians/{technician_id}/requests
-PUT /my/portfolio/profile
-GET /my/portfolio/posts
-POST /my/portfolio/posts
-PUT /my/portfolio/posts/{post_id}
+GET    /technicians/{technician_id}/profile
+GET    /technicians/{technician_id}/reviews
+GET    /technicians/{technician_id}/availability
+GET    /my/profile
+PUT    /my/profile
+DELETE /my/profile
+GET    /my/skills
+POST   /my/skills
+DELETE /my/skills
+DELETE /my/skills/{skill}
+PUT    /my/availability
+POST   /my/availability/exceptions
+DELETE /my/availability/exceptions
+DELETE /my/availability/exceptions/{date}
+PUT    /my/portfolio/profile
+GET    /my/portfolio/posts
+POST   /my/portfolio/posts
+PUT    /my/portfolio/posts/{post_id}
+DELETE /my/portfolio/posts/{post_id}
+DELETE /reviews/{review_id}
+DELETE /admin/reviews/{review_id}
 ```
 
 Portfolio profile payload:
@@ -794,9 +871,13 @@ The download URL still requires a JWT. The URL itself is not a permission token.
 ## Customer notifications
 
 ```http
-GET /notifications
-PUT /notifications/{notification_id}/read
-GET /notifications/stream
+GET    /notifications
+GET    /notifications/unread-count
+PUT    /notifications/{notification_id}/read
+PUT    /notifications/read-all
+DELETE /notifications/{notification_id}
+DELETE /notifications
+GET    /notifications/stream
 ```
 
 SSE request:

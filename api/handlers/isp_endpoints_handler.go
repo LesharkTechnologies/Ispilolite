@@ -103,7 +103,15 @@ func (h *ISPEndpointsHandler) ListCompanyTechnicians(w http.ResponseWriter, r *h
 }
 func (h *ISPEndpointsHandler) EndTechnicianLink(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r.URL.Path, "/api/v1/my/technicians/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/technicians/")
+	}
 	id = strings.TrimSuffix(id, "/end")
+	id = strings.TrimSuffix(id, "/link")
+	if id == "" {
+		respondWithError(w, 400, "technician id is required")
+		return
+	}
 	if err := h.companyRepository.EndTechnicianLink(userIDFromContext(r.Context()), id, time.Now().UTC()); err != nil {
 		respondWithError(w, 404, "company technician link not found")
 		return
@@ -162,6 +170,32 @@ func (h *ISPEndpointsHandler) AddCoverageArea(w http.ResponseWriter, r *http.Req
 		return
 	}
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "coverage area added"})
+}
+
+func (h *ISPEndpointsHandler) DeleteCoverageArea(w http.ResponseWriter, r *http.Request) {
+	locationID := pathParam(r.URL.Path, "/api/v1/my/coverage/areas/")
+	if locationID == "" {
+		locationID = pathParam(r.URL.Path, "/api/v1/coverage/areas/")
+	}
+	if locationID == "" {
+		locationID = pathParam(r.URL.Path, "/api/v1/my/coverage/")
+	}
+	if locationID == "" {
+		locationID = strings.TrimSpace(r.URL.Query().Get("location_id"))
+	}
+	if locationID == "" {
+		respondWithError(w, http.StatusBadRequest, "location id is required")
+		return
+	}
+	if err := h.coverageService.Remove(userIDFromContext(r.Context()), locationID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "coverage area not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "failed to remove coverage area")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "coverage area removed"})
 }
 
 func (h *ISPEndpointsHandler) GetCoverageRecommendations(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +411,14 @@ func (h *ISPEndpointsHandler) AddTechnician(w http.ResponseWriter, r *http.Reque
 // RemoveTechnician removes a technician from the ISP.
 func (h *ISPEndpointsHandler) RemoveTechnician(w http.ResponseWriter, r *http.Request) {
 	technicianID := pathParam(r.URL.Path, "/api/v1/technicians/")
+	if technicianID == "" {
+		technicianID = pathParam(r.URL.Path, "/api/v1/my/technicians/")
+	}
+	technicianID = strings.TrimSuffix(technicianID, "/link")
+	if technicianID == "" {
+		respondWithError(w, http.StatusBadRequest, "technician id is required")
+		return
+	}
 	ispID := userIDFromContext(r.Context())
 	technician, err := h.userService.GetUserByID(technicianID)
 	if err != nil || technician.Role != "technician" || technician.ISP_ID != ispID {
@@ -461,7 +503,15 @@ func (h *ISPEndpointsHandler) SetPackageCountyPrice(w http.ResponseWriter, r *ht
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "county price updated"})
 }
 func (h *ISPEndpointsHandler) ArchivePackage(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSuffix(pathParam(r.URL.Path, "/api/v1/packages/"), "/archive")
+	id := pathParam(r.URL.Path, "/api/v1/packages/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/my/packages/")
+	}
+	id = strings.TrimSuffix(id, "/archive")
+	if id == "" {
+		respondWithError(w, 400, "package id is required")
+		return
+	}
 	if err := h.ispService.ArchivePackage(id, userIDFromContext(r.Context())); err != nil {
 		respondWithError(w, 404, "package not found")
 		return
@@ -470,6 +520,13 @@ func (h *ISPEndpointsHandler) ArchivePackage(w http.ResponseWriter, r *http.Requ
 }
 func (h *ISPEndpointsHandler) DeletePackage(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r.URL.Path, "/api/v1/packages/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/my/packages/")
+	}
+	if id == "" {
+		respondWithError(w, 400, "package id is required")
+		return
+	}
 	if err := h.ispService.DeletePackage(id, userIDFromContext(r.Context())); err != nil {
 		respondWithError(w, 409, err.Error())
 		return

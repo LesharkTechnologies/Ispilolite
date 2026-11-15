@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"ispilolite/api/dto"
@@ -49,6 +51,42 @@ func (h *AvailabilityHandler) AddException(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: item})
+}
+
+func (h *AvailabilityHandler) DeleteException(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("date"))
+	if target == "" {
+		target = strings.TrimSpace(r.URL.Query().Get("id"))
+	}
+	if target == "" {
+		target = pathParam(r.URL.Path, "/api/v1/my/availability/exceptions/")
+	}
+	if target == "" {
+		var input struct {
+			Date string `json:"date"`
+			ID   string `json:"id"`
+		}
+		if decodeJSON(w, r, &input) == nil {
+			if input.Date != "" {
+				target = input.Date
+			} else {
+				target = input.ID
+			}
+		}
+	}
+	if target == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "date or exception id is required")
+		return
+	}
+	if err := h.service.DeleteException(r.Context(), userIDFromContext(r.Context()), target); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithErrorRaw(w, http.StatusNotFound, "exception not found")
+			return
+		}
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "exception deleted"})
 }
 
 func (h *AvailabilityHandler) Slots(w http.ResponseWriter, r *http.Request) {

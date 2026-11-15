@@ -41,6 +41,9 @@ func (s *ReviewService) CreateReview(v *models.Review) error {
 func (s *ReviewService) GetReviewsByTarget(id, kind string) ([]*models.Review, error) {
 	return s.repo.GetReviewsByTarget(id, kind)
 }
+func (s *ReviewService) DeleteReview(id, userID string) error {
+	return s.repo.DeleteReview(id, userID)
+}
 func (s *ReviewService) Report(reviewID, reporterID, reason string) error {
 	reason = strings.TrimSpace(reason)
 	if reviewID == "" || reporterID == "" || reason == "" {

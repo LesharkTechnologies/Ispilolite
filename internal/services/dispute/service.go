@@ -23,6 +23,7 @@ type Repository interface {
 	List(context.Context, string, int) ([]*models.Dispute, error)
 	AddComment(context.Context, *models.DisputeComment) error
 	Resolve(context.Context, string, string, string, string, float64) error
+	Withdraw(context.Context, string, string, string) error
 }
 type Service struct{ repo Repository }
 
@@ -86,5 +87,19 @@ func (s *Service) Resolve(ctx context.Context, id, adminID, resolution, note str
 		return err
 	}
 	queue.PublishBestEffort(queue.NotificationExchange, "notification.push", queue.Event{Type: "dispute.resolved", AggregateID: id, Data: map[string]interface{}{"resolution": resolution, "amount": amount}})
+	return nil
+}
+
+func (s *Service) Withdraw(ctx context.Context, id, userID, role string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrInvalid
+	}
+	if err := s.repo.Withdraw(ctx, id, userID, role); errors.Is(err, sql.ErrNoRows) {
+		return ErrForbidden
+	} else if err != nil {
+		return err
+	}
+	queue.PublishBestEffort(queue.NotificationExchange, "notification.push", queue.Event{Type: "dispute.cancelled", AggregateID: id, Data: map[string]interface{}{"withdrawn_by": userID}})
 	return nil
 }

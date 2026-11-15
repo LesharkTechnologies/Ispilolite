@@ -118,3 +118,26 @@ func (r *notificationRepository) MarkAllRead(userID string) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+func (r *notificationRepository) DeleteNotification(userID, notificationID string) error {
+	result, err := r.dbWriter.Exec(`DELETE FROM notifications WHERE id=$1 AND user_id=$2`, notificationID, userID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *notificationRepository) ClearNotifications(userID string) (int64, error) {
+	result, err := r.dbWriter.Exec(`DELETE FROM notifications WHERE user_id=$1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

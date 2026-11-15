@@ -37,6 +37,21 @@ func (r *coverageRepository) AddISPCoverage(ispID, locationID string) error {
 	return err
 }
 
+func (r *coverageRepository) RemoveISPCoverage(ispID, locationID string) error {
+	result, err := r.dbWriter.Exec(`DELETE FROM isp_coverage_locations WHERE isp_id=$1 AND location_id=$2`, ispID, locationID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r *coverageRepository) ListCoverageRecommendations(ispID, county string, limit int) ([]*models.Location, error) {
 	rows, err := r.dbReader.Query(`SELECT `+joinedLocationColumns+` FROM locations l WHERE l.type IN ('town','sub_county','ward','village') AND l.submission_count > 0 AND ($2='' OR lower(l.county)=lower($2)) AND NOT EXISTS (SELECT 1 FROM isp_coverage_locations c WHERE c.isp_id=$1 AND c.location_id=l.id) ORDER BY l.is_verified DESC,l.popularity_score DESC,l.submission_count DESC,l.name LIMIT $3`, ispID, county, limit)
 	if err != nil {

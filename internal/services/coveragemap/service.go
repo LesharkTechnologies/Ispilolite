@@ -16,11 +16,20 @@ var ErrInvalid = errors.New("invalid coverage polygon")
 type Repository interface {
 	Create(context.Context, *models.CoveragePolygon) error
 	List(context.Context, string, string, *float64, *float64, int) ([]*models.CoveragePolygon, error)
+	Delete(context.Context, string, string) error
 }
 
 type Service struct{ repo Repository }
 
 func NewService(repo Repository) *Service { return &Service{repo: repo} }
+
+func (s *Service) Delete(ctx context.Context, id, ispID string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrInvalid
+	}
+	return s.repo.Delete(ctx, id, strings.TrimSpace(ispID))
+}
 
 func (s *Service) Create(ctx context.Context, ispID string, item *models.CoveragePolygon) (*models.CoveragePolygon, error) {
 	if item == nil || strings.TrimSpace(item.Name) == "" {

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -38,6 +40,35 @@ func (h *NotificationHandler) Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "notification marked as read"})
+}
+
+func (h *NotificationHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/notifications/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/my/notifications/")
+	}
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "notification id is required")
+		return
+	}
+	if err := h.repository.DeleteNotification(userIDFromContext(r.Context()), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "notification not found")
+			return
+		}
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "notification deleted"})
+}
+
+func (h *NotificationHandler) Clear(w http.ResponseWriter, r *http.Request) {
+	count, err := h.repository.ClearNotifications(userIDFromContext(r.Context()))
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "notifications cleared", Data: map[string]int64{"deleted": count}})
 }
 
 func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {

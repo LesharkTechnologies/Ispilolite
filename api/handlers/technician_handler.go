@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -91,6 +92,54 @@ func (h *TechnicianHandler) GetPublicProfile(w http.ResponseWriter, r *http.Requ
 	companies, _ := h.portfolioService.CompanyLinks(id)
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]interface{}{"profile": profile, "posts": posts, "works_with": companies}})
 }
+func (h *TechnicianHandler) GetMySkills(w http.ResponseWriter, r *http.Request) {
+	skills, err := h.portfolioService.GetSkills(userIDFromContext(r.Context()))
+	if err != nil {
+		respondWithError(w, 500, "failed to list skills")
+		return
+	}
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]interface{}{"skills": skills}})
+}
+
+func (h *TechnicianHandler) AddSkill(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Skill string `json:"skill"`
+	}
+	if decodeJSON(w, r, &input) != nil || strings.TrimSpace(input.Skill) == "" {
+		respondWithError(w, 400, "skill is required")
+		return
+	}
+	if err := h.portfolioService.AddSkill(userIDFromContext(r.Context()), strings.TrimSpace(input.Skill)); err != nil {
+		respondWithError(w, 400, "failed to add skill")
+		return
+	}
+	skills, _ := h.portfolioService.GetSkills(userIDFromContext(r.Context()))
+	respondWithJSON(w, 201, dto.APIResponse{Success: true, Data: map[string]interface{}{"skills": skills}})
+}
+
+func (h *TechnicianHandler) RemoveSkill(w http.ResponseWriter, r *http.Request) {
+	skill := strings.TrimSpace(r.URL.Query().Get("skill"))
+	if skill == "" {
+		skill = pathParam(r.URL.Path, "/api/v1/my/skills/")
+	}
+	if skill == "" {
+		var input struct {
+			Skill string `json:"skill"`
+		}
+		if decodeJSON(w, r, &input) != nil || strings.TrimSpace(input.Skill) == "" {
+			respondWithError(w, 400, "skill is required")
+			return
+		}
+		skill = strings.TrimSpace(input.Skill)
+	}
+	if err := h.portfolioService.RemoveSkill(userIDFromContext(r.Context()), skill); err != nil {
+		respondWithError(w, 404, "skill not found")
+		return
+	}
+	skills, _ := h.portfolioService.GetSkills(userIDFromContext(r.Context()))
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]interface{}{"skills": skills}})
+}
+
 func (h *TechnicianHandler) UpdatePortfolioProfile(w http.ResponseWriter, r *http.Request) {
 	var req dto.TechnicianProfileRequest
 	if decodeJSON(w, r, &req) != nil {
@@ -130,6 +179,22 @@ func (h *TechnicianHandler) UpdatePortfolioPost(w http.ResponseWriter, r *http.R
 		return
 	}
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: p})
+}
+func (h *TechnicianHandler) DeletePortfolioPost(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/my/portfolio/posts/")
+	if id == "" {
+		respondWithError(w, 400, "post id is required")
+		return
+	}
+	if err := h.portfolioService.DeletePost(id, userIDFromContext(r.Context())); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "portfolio post not found")
+			return
+		}
+		respondWithError(w, 500, "failed to delete post")
+		return
+	}
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "portfolio post deleted"})
 }
 func (h *TechnicianHandler) GetMyPortfolioPosts(w http.ResponseWriter, r *http.Request) {
 	items, err := h.portfolioService.MyPosts(userIDFromContext(r.Context()))
@@ -316,4 +381,28 @@ func (h *TechnicianHandler) ReportReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Message: "review reported"})
+}
+
+func (h *TechnicianHandler) DeleteReview(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/reviews/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/admin/reviews/")
+	}
+	if id == "" {
+		respondWithError(w, 400, "review id is required")
+		return
+	}
+	userID := userIDFromContext(r.Context())
+	if userRoleFromContext(r.Context()) == "admin" {
+		userID = "" // Admin can delete any review
+	}
+	if err := h.reviewService.DeleteReview(id, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, 404, "review not found")
+			return
+		}
+		respondWithError(w, 500, "failed to delete review")
+		return
+	}
+	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "review deleted"})
 }

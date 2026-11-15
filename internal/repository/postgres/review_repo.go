@@ -43,6 +43,23 @@ func (r *reviewRepo) AnonymizeReviewsByUserID(id string) error {
 	_, err := r.writer.Exec(`UPDATE reviews SET user_id=NULL,comment=CASE WHEN comment='' THEN comment ELSE '[deleted]' END WHERE user_id=$1`, id)
 	return err
 }
+func (r *reviewRepo) DeleteReview(id, userID string) error {
+	var res sql.Result
+	var err error
+	if userID == "" {
+		res, err = r.writer.Exec(`DELETE FROM reviews WHERE id=$1`, id)
+	} else {
+		res, err = r.writer.Exec(`DELETE FROM reviews WHERE id=$1 AND user_id=$2`, id, userID)
+	}
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
 func (r *reviewRepo) ReportReview(v *models.ReviewReport) error {
 	_, err := r.writer.Exec(`INSERT INTO review_reports(id,review_id,reporter_id,reason,status,created_at) VALUES($1,$2,$3,$4,'open',$5) ON CONFLICT(review_id,reporter_id) DO UPDATE SET reason=EXCLUDED.reason,status='open'`, v.ID, v.ReviewID, v.ReporterID, v.Reason, v.CreatedAt)
 	return err
