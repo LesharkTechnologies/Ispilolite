@@ -41,7 +41,7 @@ fi
 
 # 3. Create required directories
 echo -e "\n${YELLOW}[3/8] Creating directories and setting permissions...${NC}"
-mkdir -p "${APP_DIR}/bin" "${APP_DIR}/migrations" "${LOG_DIR}"
+mkdir -p "${APP_DIR}/bin" "${APP_DIR}/migrations" "${APP_DIR}/config" "${LOG_DIR}"
 mkdir -p "${STORAGE_DIR}/documents" "${STORAGE_DIR}/audit"
 
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}" "${LOG_DIR}" "${STORAGE_DIR}"
@@ -125,9 +125,10 @@ export GOTOOLCHAIN=auto
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Copy migrations
+# Copy config and migrations
+cp -r "${REPO_ROOT}/config/"* "${APP_DIR}/config/"
 cp -r "${REPO_ROOT}/migrations/"* "${APP_DIR}/migrations/"
-chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/migrations"
+chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/config" "${APP_DIR}/migrations"
 
 # Build core API, notification service, and migration runner
 go build -buildvcs=false -o "${APP_DIR}/bin/auth" "${REPO_ROOT}/cmd/auth"
@@ -160,7 +161,22 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now ispilolite-api
-systemctl enable --now ispilolite-notification
+if grep -q "^NOTIFICATION_WEBHOOK_URL=https" "${APP_DIR}/.env" 2>/dev/null; then
+    systemctl enable --now ispilolite-notification || true
+else
+    echo -e "${YELLOW}Notification worker idle (configure NOTIFICATION_WEBHOOK_URL in .env to activate).${NC}"
+fi
+
+# Ensure SSL certificate directory and bootstrap cert exist so Nginx starts cleanly before Certbot
+CERT_DIR="/etc/letsencrypt/live/lite.ispilo.co.ke"
+if [ ! -f "${CERT_DIR}/fullchain.pem" ]; then
+    echo -e "${YELLOW}Generating bootstrap SSL certificate for initial Nginx startup...${NC}"
+    mkdir -p "${CERT_DIR}"
+    openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+        -keyout "${CERT_DIR}/privkey.pem" \
+        -out "${CERT_DIR}/fullchain.pem" \
+        -subj "/CN=lite.ispilo.co.ke" >/dev/null 2>&1
+fi
 
 # Nginx setup
 cp "${REPO_ROOT}/deploy/nginx/ispilolite.conf" /etc/nginx/sites-available/ispilolite.conf
