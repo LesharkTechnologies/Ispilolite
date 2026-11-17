@@ -119,15 +119,21 @@ if ! command -v go &>/dev/null; then
     rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
     rm /tmp/go.tar.gz
     export PATH=$PATH:/usr/local/go/bin
+    if ! grep -q "/usr/local/go/bin" /etc/profile; then
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
+    fi
 fi
+export PATH=$PATH:/usr/local/go/bin
 export GOTOOLCHAIN=auto
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Copy config and migrations
-cp -r "${REPO_ROOT}/config/"* "${APP_DIR}/config/"
-cp -r "${REPO_ROOT}/migrations/"* "${APP_DIR}/migrations/"
+# Copy config and migrations if running from a different clone location
+if [ "${REPO_ROOT}" != "${APP_DIR}" ]; then
+    cp -r "${REPO_ROOT}/config/"* "${APP_DIR}/config/"
+    cp -r "${REPO_ROOT}/migrations/"* "${APP_DIR}/migrations/"
+fi
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/config" "${APP_DIR}/migrations"
 
 # Build core API, notification service, and migration runner
