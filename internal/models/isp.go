@@ -13,6 +13,9 @@ type ISP struct {
 	Rating               float64       `json:"rating" db:"rating"`
 	ReviewCount          int           `json:"review_count" db:"review_count"`
 	IsActive             bool          `json:"is_active" db:"is_active"`
+	IdentityStatus       string        `json:"identity_status" db:"identity_status"`
+	VerifiedName         string        `json:"verified_name,omitempty" db:"verified_name"`
+	DisplayName          string        `json:"display_name,omitempty" db:"display_name"`
 	CreatedAt            time.Time     `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time     `json:"updated_at" db:"updated_at"`
 	ServedLocations      []byte        `json:"served_locations,omitempty" db:"served_locations"`

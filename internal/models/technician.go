@@ -24,6 +24,9 @@ type Technician struct {
 	ReviewCount int       `json:"review_count" db:"review_count"`
 	JobsDone    int       `json:"jobs_done" db:"jobs_done"`
 	IsAvailable bool      `json:"is_available" db:"is_available"`
+	IdentityStatus string `json:"identity_status" db:"identity_status"`
+	VerifiedName   string `json:"verified_name,omitempty" db:"verified_name"`
+	DisplayName    string `json:"display_name,omitempty" db:"display_name"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 
@@ -51,7 +54,30 @@ type TechnicianProfile struct {
 	Town            string    `json:"town" db:"town"`
 	Village         string    `json:"village" db:"village"`
 	Skills          []string  `json:"skills" db:"-"`
+	IdentityStatus  string    `json:"identity_status" db:"identity_status"`
+	VerifiedName    string    `json:"verified_name,omitempty" db:"verified_name"`
+	DisplayName     string    `json:"display_name,omitempty" db:"display_name"`
 	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// EffectiveDisplayName returns display_name or falls back to name.
+func (t *Technician) EffectiveDisplayName() string {
+	if t.DisplayName != "" {
+		return t.DisplayName
+	}
+	return t.Name
+}
+
+// IdentityLabel returns the identity display string (e.g. "identity [Collins Muthomi]").
+func (t *Technician) IdentityLabel() string {
+	legal := t.VerifiedName
+	if legal == "" {
+		legal = t.Name
+	}
+	if legal == "" {
+		return ""
+	}
+	return "identity [" + legal + "]"
 }
 type TechnicianPost struct {
 	ID           string    `json:"id" db:"id"`

@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	dto "ispilolite/api/dto"
 	"ispilolite/internal/models"
+	"ispilolite/internal/monitoring"
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/repository/redis"
 	authsvc "ispilolite/internal/services/auth"
@@ -147,6 +149,8 @@ func (h *ISPEndpointsHandler) AssignTechnician(w http.ResponseWriter, r *http.Re
 		respondWithError(w, 409, "technician assignment failed")
 		return
 	}
+	monitoring.RecordFor(r, req.TechnicianID, monitoring.EventJobClaim, "job", requestID,
+		map[string]interface{}{"assigned_by": userIDFromContext(r.Context())})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: job})
 }
 
@@ -323,6 +327,8 @@ func (h *ISPEndpointsHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusNotFound, "job not found")
 		return
 	}
+	// ISP staff opening a client's job details is a watched "client view".
+	monitoring.Record(r, monitoring.EventClientView, "job", id, nil)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: item})
 }
 
@@ -441,6 +447,136 @@ func (h *ISPEndpointsHandler) RemoveTechnician(w http.ResponseWriter, r *http.Re
 	}
 	recordAudit(r, "isp.technician_remove", "DELETE", "technician", technicianID, "ISP removed technician "+technicianID, true, map[string]interface{}{"technician_id": technicianID})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "technician removed"})
+}
+
+// SetTechnicianStatus allows an ISP to suspend, deactivate, or reactivate a technician.
+// When suspended/inactive, the technician's sessions are revoked and their account is blocked from using the system.
+func (h *ISPEndpointsHandler) SetTechnicianStatus(w http.ResponseWriter, r *http.Request) {
+	ispID := userIDFromContext(r.Context())
+	if ispID == "" {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	technicianID := pathParam(r.URL.Path, "/api/v1/my/technicians/")
+	technicianID = strings.TrimSuffix(technicianID, "/status")
+	technicianID = strings.TrimSuffix(technicianID, "/suspend")
+	technicianID = strings.TrimSuffix(technicianID, "/activate")
+	if technicianID == "" {
+		respondWithError(w, http.StatusBadRequest, "technician id is required")
+		return
+	}
+
+	var req dto.UpdateTechnicianStatusRequest
+	if strings.HasSuffix(r.URL.Path, "/suspend") {
+		req.Status = "suspended"
+	} else if strings.HasSuffix(r.URL.Path, "/activate") {
+		req.Status = "active"
+	} else {
+		if decodeJSON(w, r, &req) != nil {
+			respondWithError(w, http.StatusBadRequest, "invalid request payload")
+			return
+		}
+	}
+
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	switch status {
+	case "active", "suspended", "inactive":
+	default:
+		respondWithError(w, http.StatusBadRequest, "status must be 'active', 'suspended', or 'inactive'")
+		return
+	}
+
+	if err := h.userService.SetISPTechnicianStatus(ispID, technicianID, status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "technician not found or not assigned to this ISP")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "failed to update technician status: "+err.Error())
+		return
+	}
+
+	recordAudit(r, "isp.technician_status_update", "UPDATE", "technician", technicianID,
+		fmt.Sprintf("ISP %s updated technician %s status to %s", ispID, technicianID, status), true,
+		map[string]interface{}{
+			"isp_id":        ispID,
+			"technician_id": technicianID,
+			"new_status":    status,
+		})
+
+	msg := fmt.Sprintf("technician status updated to %s", status)
+	if status == "suspended" || status == "inactive" {
+		msg = fmt.Sprintf("technician %s has been %s and blocked from system access", technicianID, status)
+	}
+
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Message: msg,
+		Data: map[string]interface{}{
+			"technician_id": technicianID,
+			"status":        status,
+		},
+	})
+}
+
+// ChangeTechnicianAccountType allows an ISP to change a technician's user type.
+func (h *ISPEndpointsHandler) ChangeTechnicianAccountType(w http.ResponseWriter, r *http.Request) {
+	ispID := userIDFromContext(r.Context())
+	if ispID == "" {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	technicianID := pathParam(r.URL.Path, "/api/v1/my/technicians/")
+	technicianID = strings.TrimSuffix(technicianID, "/account-type")
+	technicianID = strings.TrimSuffix(technicianID, "/role")
+	if technicianID == "" {
+		respondWithError(w, http.StatusBadRequest, "technician id is required")
+		return
+	}
+
+	var req dto.ChangeAccountTypeRequest
+	if decodeJSON(w, r, &req) != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+	targetRole, err := models.NormalizeRole(req.DesiredRole())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if targetRole == models.RoleAdmin {
+		respondWithError(w, http.StatusForbidden, "cannot change technician role to admin")
+		return
+	}
+
+	// Verify technician belongs to this ISP
+	tech, err := h.userService.GetUserByID(technicianID)
+	if err != nil || (tech.ISP_ID != ispID && tech.Role != "technician") {
+		respondWithError(w, http.StatusNotFound, "technician not found or not associated with this ISP")
+		return
+	}
+
+	// ISP change bypasses the 24h user cooldown
+	if err := h.userService.ChangeAccountType(technicianID, targetRole, true); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to update technician account type: "+err.Error())
+		return
+	}
+
+	recordAudit(r, "isp.technician_role_update", "UPDATE", "technician", technicianID,
+		fmt.Sprintf("ISP %s updated technician %s account type to %s", ispID, technicianID, targetRole), true,
+		map[string]interface{}{
+			"isp_id":        ispID,
+			"technician_id": technicianID,
+			"new_role":      targetRole,
+		})
+
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("technician account type updated to %s", targetRole),
+		Data: map[string]interface{}{
+			"technician_id": technicianID,
+			"role":          targetRole,
+		},
+	})
 }
 
 // CreatePackage creates a new internet package.

@@ -74,11 +74,82 @@ type RefreshTokenRequest struct {
 }
 
 type UpdateProfileRequest struct {
-	Name      string       `json:"name,omitempty"`
-	Email     string       `json:"email,omitempty"`
-	AvatarURL string       `json:"avatar_url,omitempty"`
-	Location  *LocationDTO `json:"location,omitempty"`
-	Locale    string       `json:"locale,omitempty"`
+	Name        string       `json:"name,omitempty"`
+	DisplayName string       `json:"display_name,omitempty"`
+	Email       string       `json:"email,omitempty"`
+	AvatarURL   string       `json:"avatar_url,omitempty"`
+	Location    *LocationDTO `json:"location,omitempty"`
+	Locale      string       `json:"locale,omitempty"`
+}
+
+type UpdateDisplayNameRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+type ChangeAccountTypeRequest struct {
+	AccountType string `json:"account_type"`
+	Role        string `json:"role,omitempty"`
+}
+
+func (r ChangeAccountTypeRequest) DesiredRole() string {
+	if strings.TrimSpace(r.AccountType) != "" {
+		return strings.TrimSpace(r.AccountType)
+	}
+	return strings.TrimSpace(r.Role)
+}
+
+type UpdateTechnicianStatusRequest struct {
+	Status string `json:"status"` // active, suspended, inactive
+}
+
+type FillMissingProfileRequest struct {
+	DisplayName        string       `json:"display_name,omitempty"`
+	Name               string       `json:"name,omitempty"`
+	Email              string       `json:"email,omitempty"`
+	AvatarURL          string       `json:"avatar_url,omitempty"`
+	County             string       `json:"county,omitempty"`
+	Town               string       `json:"town,omitempty"`
+	Village            string       `json:"village,omitempty"`
+	Location           *LocationDTO `json:"location,omitempty"`
+	// Technician specific fields
+	Bio                string       `json:"bio,omitempty"`
+	ExperienceYears    *int         `json:"experience_years,omitempty"`
+	PricePerHour       *float64     `json:"price_per_hour,omitempty"`
+	Skills             []string     `json:"skills,omitempty"`
+	IsAvailable        *bool        `json:"is_available,omitempty"`
+	// ISP specific fields
+	LogoURL            string       `json:"logo_url,omitempty"`
+	CustomerCareNumber string       `json:"customer_care_number,omitempty"`
+	Description        string       `json:"description,omitempty"`
+	// Identity verification fields
+	IDPhotoURL         string       `json:"id_photo_url,omitempty"`
+	IDPhotoBackURL     string       `json:"id_photo_back_url,omitempty"`
+	IDNumber           string       `json:"id_number,omitempty"`
+	DocumentType       string       `json:"document_type,omitempty"`
+	VerificationNotes  string       `json:"verification_notes,omitempty"`
+}
+
+type MissingFieldItem struct {
+	Field       string `json:"field"`
+	Label       string `json:"label"`
+	Category    string `json:"category"` // "identity", "profile", "services", "location"
+	Description string `json:"description"`
+	Endpoint    string `json:"endpoint"`
+	Method      string `json:"method"`
+}
+
+type ProfileCompletionReport struct {
+	UserID               string             `json:"user_id"`
+	Role                 string             `json:"role"`
+	CompletionPercentage int                `json:"completion_percentage"`
+	IsComplete           bool               `json:"is_complete"`
+	FilledCount          int                `json:"filled_count"`
+	TotalRequired        int                `json:"total_required"`
+	FilledFields         []string           `json:"filled_fields"`
+	MissingFields        []MissingFieldItem `json:"missing_fields"`
+	IdentityStatus       string             `json:"identity_status"` // "unverified", "pending", "id_verified", "business_verified", "both"
+	VerifiedName         string             `json:"verified_name,omitempty"`
+	UploadInstructions   map[string]string  `json:"upload_instructions"`
 }
 
 type LocationDTO struct {
@@ -476,3 +547,21 @@ func parseRadiusKM(radiusKM, radiusMeters string) float64 {
 
 func validLat(lat float64) bool { return lat >= -90 && lat <= 90 }
 func validLon(lon float64) bool { return lon >= -180 && lon <= 180 }
+
+// GenerateJobPairingQRRequest allows a technician to request a signed pairing QR payload.
+type GenerateJobPairingQRRequest struct {
+	ExpiresInSeconds int     `json:"expires_in_seconds,omitempty"`
+	Amount           float64 `json:"amount,omitempty"`
+	Notes            string  `json:"notes,omitempty"`
+}
+
+// ConfirmJobPairingRequest is submitted by the customer scanning the QR code.
+type ConfirmJobPairingRequest struct {
+	PairingID        string  `json:"pairing_id"`
+	Signature        string  `json:"signature,omitempty"`
+	VerificationCode string  `json:"verification_code,omitempty"`
+	ExpiresAt        int64   `json:"expires_at,omitempty"`
+	Notes            string  `json:"notes,omitempty"`
+	Rating           int     `json:"rating,omitempty"`
+}
+

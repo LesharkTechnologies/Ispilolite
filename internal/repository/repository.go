@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"ispilolite/internal/models"
 	"time"
 )
@@ -11,6 +12,10 @@ type UserRepository interface {
 	GetUserByUsername(username string) (*models.User, error)
 	GetUserByID(userID string) (*models.User, error)
 	UpdateUser(user *models.User) error
+	SetDisplayName(userID, displayName string) error
+	ChangeAccountType(userID, targetRole string, bypassCooldown bool) error
+	SetUserStatus(userID, status string) error
+	SetISPTechnicianStatus(ispID, technicianID, status string) error
 	GetTechniciansByISPID(ispID string) ([]*models.User, error)
 	GetUsersByStatus(status string) ([]*models.User, error)
 	ListUsersForMessaging(role string, userIDs []string) ([]*models.User, error)
@@ -103,6 +108,13 @@ type JobRequestRepository interface {
 	TerminateJob(requestID, actorID, reason string, endedAt time.Time) error
 }
 
+type JobPairingRepository interface {
+	CreatePairingSession(ctx context.Context, session *models.JobPairingSession) error
+	GetPairingSession(ctx context.Context, jobID, key string) (*models.JobPairingSession, error)
+	GetActivePairingSession(ctx context.Context, jobID string) (*models.JobPairingSession, error)
+	ConfirmPairingSession(ctx context.Context, jobID, sessionID, customerID, notes string, rating int) (*models.JobPairingSession, error)
+}
+
 type CompanyRepository interface {
 	LinkTechnician(ispID, technicianID string) (string, error)
 	ListCompanyTechnicians(ispID string) ([]*models.User, error)
@@ -172,7 +184,10 @@ type QuotationRepository interface {
 }
 
 type CacheRepository interface {
+	// SetOTP stores a keyed hash of the code (never the plaintext code) so
+	// verification codes are not exposed if Redis is compromised.
 	SetOTP(userID string, otp string, expiration time.Duration) error
+	// GetOTP returns the stored OTP digest for comparison via otp.Matches.
 	GetOTP(userID string) (string, error)
 	DeleteOTP(userID string) error
 	Set(key string, value interface{}, expiration time.Duration) error

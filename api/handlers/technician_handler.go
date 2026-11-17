@@ -9,6 +9,7 @@ import (
 
 	dto "ispilolite/api/dto"
 	"ispilolite/internal/models"
+	"ispilolite/internal/monitoring"
 	"ispilolite/internal/repository/postgres"
 	redisrepo "ispilolite/internal/repository/redis"
 	"ispilolite/internal/services/jobrequest"
@@ -227,6 +228,8 @@ func (h *TechnicianHandler) ApplyToJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusConflict, "job is unavailable")
 		return
 	}
+	monitoring.Record(r, monitoring.EventJobApplication, "job", id,
+		map[string]interface{}{"proposed_price": req.ProposedPrice})
 	recordAudit(r, "job.apply", "REQUEST", "job", id, "Technician applied to job "+id, true, map[string]interface{}{"job_id": id, "proposed_price": req.ProposedPrice})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "application submitted"})
 }

@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
 
 type Coordinates struct {
 	Lat float64 `json:"lat" db:"latitude"`
@@ -12,7 +16,30 @@ const (
 	RoleCustomer   = "customer"
 	RoleTechnician = "technician"
 	RoleISP        = "isp"
+	RoleBoth       = "both"
+	RoleAdmin      = "admin"
 )
+
+// NormalizeRole maps friendly role aliases ('c', 't', 'i', 't&i', 'both') to official role constants.
+func NormalizeRole(input string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(input))
+	norm = strings.ReplaceAll(norm, "-", "_")
+	norm = strings.ReplaceAll(norm, " ", "_")
+	switch norm {
+	case "c", "client", "customer":
+		return RoleCustomer, nil
+	case "t", "tech", "technician":
+		return RoleTechnician, nil
+	case "i", "isp":
+		return RoleISP, nil
+	case "both", "t&i", "t_and_i", "isp_and_tech", "isp_and_technician", "all":
+		return RoleBoth, nil
+	case "admin":
+		return RoleAdmin, nil
+	default:
+		return "", errors.New("invalid account type: must be 'customer', 'technician', 'isp', or 'both'")
+	}
+}
 
 // User is the base account record shared across roles.
 type User struct {
@@ -43,8 +70,34 @@ type User struct {
 	ReferredByCode      string       `json:"-" db:"-"`
 	CreditBalance       float64      `json:"credit_balance" db:"credit_balance"`
 	Locale              string       `json:"locale" db:"locale"`
+	IdentityStatus      string       `json:"identity_status" db:"identity_status"`
+	VerifiedName        string       `json:"verified_name,omitempty" db:"verified_name"`
+	DisplayName         string       `json:"display_name,omitempty" db:"display_name"`
+	RoleChangedAt       *time.Time   `json:"role_changed_at,omitempty" db:"role_changed_at"`
+	SecondaryRole       string       `json:"secondary_role,omitempty" db:"secondary_role"`
 	DeletedAt           *time.Time   `json:"deleted_at,omitempty" db:"deleted_at"`
 	RetentionUntil      *time.Time   `json:"retention_until,omitempty" db:"retention_until"`
+}
+
+// EffectiveDisplayName returns the user's custom display name (e.g. "Leshark")
+// if set, falling back to their full name (e.g. "Collins Muthomi").
+func (u *User) EffectiveDisplayName() string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	return u.Name
+}
+
+// IdentityLabel formats the identity display string (e.g. "identity [Collins Muthomi]").
+func (u *User) IdentityLabel() string {
+	legal := u.VerifiedName
+	if legal == "" {
+		legal = u.Name
+	}
+	if legal == "" {
+		return ""
+	}
+	return "identity [" + legal + "]"
 }
 
 type Referral struct {

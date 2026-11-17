@@ -84,7 +84,8 @@ main{max-width:520px;margin:7vh auto;background:white;padding:2rem;border-radius
 img{width:88px;height:88px;border-radius:50%;object-fit:cover}h1{margin:.5rem 0}.role{text-transform:capitalize;color:#54657c}
 .stats{display:flex;gap:2rem;margin-top:1.5rem}.stats strong{display:block;font-size:1.25rem}</style>
 </head><body><main>{{if .AvatarURL}}<img src="{{.AvatarURL}}" alt="{{.Name}} profile photo">{{end}}
-<h1>{{.Name}}</h1><p class="role">{{.Role}}</p>
+{{if .DisplayName}}<h1>{{.DisplayName}}</h1><p class="identity" style="color:#0284c7;font-weight:600;margin:0 0 .5rem">{{.IdentityLabel}}</p>{{else}}<h1>{{.Name}}</h1>{{end}}
+<p class="role">{{.Role}}</p>
 <div class="stats"><div><strong>{{.FollowerCount}}</strong> followers</div><div><strong>{{.FollowingCount}}</strong> following</div></div>
 </main></body></html>`))
 

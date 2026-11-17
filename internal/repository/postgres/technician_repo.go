@@ -55,7 +55,7 @@ func (r *technicianRepo) UpsertProfile(p *models.TechnicianProfile) error {
 }
 func (r *technicianRepo) GetProfile(id string) (*models.TechnicianProfile, error) {
 	p := &models.TechnicianProfile{TechnicianID: id}
-	err := r.reader.QueryRow(`SELECT technician_id,bio,experience_years,price_per_hour,is_available,county,town,village,updated_at FROM technician_profiles WHERE technician_id=$1`, id).Scan(&p.TechnicianID, &p.Bio, &p.ExperienceYears, &p.PricePerHour, &p.IsAvailable, &p.County, &p.Town, &p.Village, &p.UpdatedAt)
+	err := r.reader.QueryRow(`SELECT technician_id,bio,experience_years,price_per_hour,is_available,county,town,village,updated_at,COALESCE(identity_status,'unverified'),COALESCE(verified_name,'') FROM technician_profiles WHERE technician_id=$1`, id).Scan(&p.TechnicianID, &p.Bio, &p.ExperienceYears, &p.PricePerHour, &p.IsAvailable, &p.County, &p.Town, &p.Village, &p.UpdatedAt, &p.IdentityStatus, &p.VerifiedName)
 	if err != nil {
 		return nil, err
 	}

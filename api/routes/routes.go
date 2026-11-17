@@ -202,6 +202,26 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 		return nil, nil, err
 	}
 	disputeHandler := handlers.NewDisputeHandler(disputesvc.NewService(disputeRepo))
+	customerFlagHandler, err := handlers.NewCustomerFlagHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	identityHandler, err := handlers.NewIdentityVerificationHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	cardsHandler, err := handlers.NewCardsHandler()
+	if err != nil {
+		return nil, nil, err
+	}
+	jobRequestRepo, err := postgres.NewJobRequestRepo()
+	if err != nil {
+		return nil, nil, err
+	}
+	jobPairingHandler, err := handlers.NewJobPairingHandler(jobRequestRepo, paymentRepo, notificationService)
+	if err != nil {
+		return nil, nil, err
+	}
 	earningsRepo, err := postgres.NewEarningsRepository()
 	if err != nil {
 		return nil, nil, err
@@ -378,6 +398,17 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/isp-packages", stdHandler(isp.ListPackages))
 	api.GET("/package-units", stdHandler(isp.ListPackageUnits))
 
+	// Discovery and e-commerce card listings (ISPs, Technicians, Customers with Jobs, and Jobs)
+	api.GET("/technicians", stdHandler(cardsHandler.ListTechnicians))
+	api.GET("/customers/with-jobs", stdHandler(cardsHandler.ListCustomersWithJobs))
+	api.GET("/jobs", stdHandler(cardsHandler.ListJobs))
+	api.GET("/cards/isps", stdHandler(cardsHandler.ListISPs))
+	api.GET("/cards/technicians", stdHandler(cardsHandler.ListTechnicians))
+	api.GET("/cards/customers-with-jobs", stdHandler(cardsHandler.ListCustomersWithJobs))
+	api.GET("/cards/jobs", stdHandler(cardsHandler.ListJobs))
+	api.GET("/cards/overview", stdHandler(cardsHandler.Overview))
+	api.GET("/ecommerce/directory", stdHandler(cardsHandler.Overview))
+
 	api.GET("/geo/locations/search", stdHandler(location.SearchLocations))
 	api.GET("/geo/nearby/isps", stdHandler(geoHandler.NearbyISPs))
 	api.GET("/geo/nearby/technicians", stdHandler(geoHandler.NearbyTechnicians))
@@ -423,6 +454,19 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/my/installations", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetInstallations, "isp": ispEndpoints.GetInstallations}))
 	api.GET("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetProfile, "isp": ispEndpoints.GetProfile, "technician": technician.GetProfile}))
 	api.PUT("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.UpdateProfile, "isp": ispEndpoints.UpdateProfile, "technician": client.UpdateProfile}))
+	api.PATCH("/my/profile", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.UpdateProfile, "isp": ispEndpoints.UpdateProfile, "technician": client.UpdateProfile}))
+	api.GET("/my/profile/completion", authHandler("", client.GetProfileCompletion))
+	api.GET("/my/missing-fields", authHandler("", client.GetProfileCompletion))
+	api.PATCH("/my/profile/fill-missing", authHandler("", client.FillMissingProfile))
+	api.POST("/my/profile/fill-missing", authHandler("", client.FillMissingProfile))
+	api.PATCH("/my/profile/complete", authHandler("", client.FillMissingProfile))
+	api.PATCH("/my/display-name", authHandler("", client.UpdateDisplayName))
+	api.PUT("/my/display-name", authHandler("", client.UpdateDisplayName))
+	api.PATCH("/users/display-name", authHandler("", client.UpdateDisplayName))
+	api.PATCH("/my/account-type", authHandler("", client.ChangeAccountType))
+	api.POST("/my/account-type", authHandler("", client.ChangeAccountType))
+	api.PUT("/my/account-type", authHandler("", client.ChangeAccountType))
+	api.PATCH("/users/account-type", authHandler("", client.ChangeAccountType))
 	api.DELETE("/my/profile", socialUserHandler(client.RequestDeleteProfile))
 	api.GET("/my/referrals", authHandler("customer", referralHandler.Summary))
 
@@ -434,6 +478,11 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.POST("/my/technicians/:id/end", authHandler("isp", ispEndpoints.EndTechnicianLink))
 	api.DELETE("/my/technicians/:id", authHandler("isp", ispEndpoints.RemoveTechnician))
 	api.DELETE("/my/technicians/:id/link", authHandler("isp", ispEndpoints.EndTechnicianLink))
+	api.PATCH("/my/technicians/:id/status", authHandler("isp", ispEndpoints.SetTechnicianStatus))
+	api.POST("/my/technicians/:id/suspend", authHandler("isp", ispEndpoints.SetTechnicianStatus))
+	api.POST("/my/technicians/:id/activate", authHandler("isp", ispEndpoints.SetTechnicianStatus))
+	api.PATCH("/my/technicians/:id/account-type", authHandler("isp", ispEndpoints.ChangeTechnicianAccountType))
+	api.PUT("/my/technicians/:id/account-type", authHandler("isp", ispEndpoints.ChangeTechnicianAccountType))
 	api.POST("/my/vacancies", authHandler("isp", vacancies.Create))
 	api.GET("/my/vacancies", authHandler("isp", vacancies.List))
 	api.DELETE("/my/vacancies/:id", authHandler("isp", vacancies.Close))
@@ -516,6 +565,14 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.POST("/jobs/:id/installation-proof", authHandler("technician", installationOperations.SaveProof))
 	api.GET("/jobs/:id/installation-proof", authHandler("", installationOperations.GetProof))
 	api.POST("/jobs/:id/installation-confirm", authHandler("customer", installationOperations.ConfirmProof))
+
+	// Job Handover & Escrow Release via Dynamic QR Code Pairing
+	api.POST("/jobs/:id/pairing-qr", authHandler("technician", jobPairingHandler.GeneratePairingQR))
+	api.GET("/jobs/:id/pairing-status", authHandler("", jobPairingHandler.GetPairingStatus))
+	api.POST("/jobs/:id/confirm-pairing", authHandler("customer", jobPairingHandler.ConfirmPairing))
+	api.POST("/my/jobs/:id/pairing-qr", authHandler("technician", jobPairingHandler.GeneratePairingQR))
+	api.GET("/my/jobs/:id/pairing-status", authHandler("", jobPairingHandler.GetPairingStatus))
+	api.POST("/my/jobs/:id/confirm-pairing", authHandler("customer", jobPairingHandler.ConfirmPairing))
 	api.POST("/jobs/:id/location", authHandler("technician", realtimeHandler.UpdateLocation))
 	api.GET("/jobs/:id/messages", authHandler("", chatHandler.List))
 	api.POST("/jobs/:id/messages", authHandler("", chatHandler.Send))
@@ -532,6 +589,15 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.DELETE("/disputes/:id", authHandler("", disputeHandler.Withdraw))
 	api.POST("/disputes/:id/withdraw", authHandler("", disputeHandler.Withdraw))
 	api.POST("/disputes/:id/cancel", authHandler("", disputeHandler.Withdraw))
+	api.POST("/flags", authHandler("", customerFlagHandler.Create))
+	api.GET("/my/flags", authHandler("", customerFlagHandler.ListMine))
+	api.POST("/flags/:id/cancel", authHandler("", customerFlagHandler.Cancel))
+	api.POST("/identity/verify", authHandler("", identityHandler.Submit))
+	api.POST("/identity-verifications", authHandler("", identityHandler.Submit))
+	api.POST("/technicians/identity-verification", authHandler("", identityHandler.Submit))
+	api.GET("/identity/status", authHandler("", identityHandler.GetStatus))
+	api.GET("/identity/me", authHandler("", identityHandler.GetStatus))
+	api.GET("/my/identity-verification", authHandler("", identityHandler.GetStatus))
 	api.GET("/warranty-claims", authHandler("", warrantyHandler.List))
 	api.PATCH("/warranty-claims/:id", authHandlerByRole(map[string]http.HandlerFunc{"isp": warrantyHandler.Resolve, "technician": warrantyHandler.Resolve}))
 
@@ -576,6 +642,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.POST("/admin/users", authHandler("admin", admin.CreateUser))
 	api.GET("/admin/users", authHandler("admin", admin.ListUsers))
 	api.PATCH("/admin/users/:id", authHandler("admin", admin.UpdateUser))
+	api.PATCH("/admin/users/:id/account-type", authHandler("admin", admin.ChangeUserAccountType))
+	api.PUT("/admin/users/:id/account-type", authHandler("admin", admin.ChangeUserAccountType))
+	api.PATCH("/admin/users/:id/role", authHandler("admin", admin.ChangeUserAccountType))
+	api.PATCH("/admin/users/:id/status", authHandler("admin", admin.SetUserStatus))
 	api.GET("/admin/settlements/outbox", authHandler("admin", admin.SettlementOutbox))
 	api.POST("/admin/settlements/outbox/:id/retry", authHandler("admin", admin.RetrySettlement))
 	api.GET("/admin/tax-rates", authHandler("admin", admin.TaxRates))
@@ -607,6 +677,16 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/admin/disputes", authHandler("admin", disputeHandler.AdminList))
 	api.PATCH("/admin/disputes/:id", authHandler("admin", disputeHandler.Resolve))
 	api.DELETE("/admin/disputes/:id", authHandler("admin", disputeHandler.Withdraw))
+	api.GET("/admin/flags", authHandler("admin", customerFlagHandler.AdminList))
+	api.PATCH("/admin/flags/:id", authHandler("admin", customerFlagHandler.AdminReview))
+	api.GET("/admin/monitoring", authHandler("admin", customerFlagHandler.AdminMonitoring))
+	api.GET("/admin/monitoring/:user_id/activity", authHandler("admin", customerFlagHandler.AdminActivity))
+	api.DELETE("/admin/monitoring/:user_id", authHandler("admin", customerFlagHandler.AdminReleaseMonitoring))
+	api.GET("/admin/identity-verifications", authHandler("admin", identityHandler.AdminList))
+	api.GET("/admin/identity-verifications/:id", authHandler("admin", identityHandler.AdminGet))
+	api.POST("/admin/identity-verifications/:id/verify", authHandler("admin", identityHandler.AdminApprove))
+	api.POST("/admin/identity-verifications/:id/approve", authHandler("admin", identityHandler.AdminApprove))
+	api.POST("/admin/identity-verifications/:id/reject", authHandler("admin", identityHandler.AdminReject))
 	api.POST("/reviews/:id/report", authHandler("", technician.ReportReview))
 
 	handler := middleware.RequestLogger(log.Default())(monitoring.Middleware("api", router))

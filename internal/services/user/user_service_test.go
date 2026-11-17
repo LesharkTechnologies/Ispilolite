@@ -42,6 +42,11 @@ func (m *MockUserRepository) UpdateUser(user *models.User) error {
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) SetDisplayName(userID, displayName string) error {
+	args := m.Called(userID, displayName)
+	return args.Error(0)
+}
+
 func (m *MockUserRepository) GetTechniciansByISPID(ispID string) ([]*models.User, error) {
 	args := m.Called(ispID)
 	return args.Get(0).([]*models.User), args.Error(1)
@@ -62,6 +67,21 @@ func (m *MockUserRepository) SanitizeAndDeleteUser(userID string) error {
 	return args.Error(0)
 }
 
+func (m *MockUserRepository) ChangeAccountType(userID, targetRole string, bypassCooldown bool) error {
+	args := m.Called(userID, targetRole, bypassCooldown)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) SetUserStatus(userID, status string) error {
+	args := m.Called(userID, status)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) SetISPTechnicianStatus(ispID, technicianID, status string) error {
+	args := m.Called(ispID, technicianID, status)
+	return args.Error(0)
+}
+
 func (m *MockUserRepository) PurgeExpiredUsers() (int64, error) {
 	args := m.Called()
 	return args.Get(0).(int64), args.Error(1)
@@ -78,6 +98,20 @@ func TestUserService_RequestDeleteUser(t *testing.T) {
 
 	err := userService.RequestDeleteUser(userID, status)
 
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestUserService_SetDisplayName(t *testing.T) {
+	mockRepo := new(MockUserRepository)
+	userService := NewUserService(mockRepo)
+
+	userID := "user-123"
+	displayName := "Leshark"
+
+	mockRepo.On("SetDisplayName", userID, displayName).Return(nil)
+
+	err := userService.SetDisplayName(userID, displayName)
 	assert.NoError(t, err)
 	mockRepo.AssertExpectations(t)
 }

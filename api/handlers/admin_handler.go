@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -153,6 +154,112 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	recordAudit(r, "admin.user_update", "UPDATE", "user", id, "Admin updated user status="+input.Status, true, map[string]interface{}{"user_id": id, "status": input.Status})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "user updated"})
+}
+
+// ChangeUserAccountType allows an admin to change any user's role/account type immediately, bypassing the 24-hour cooldown.
+func (h *AdminHandler) ChangeUserAccountType(w http.ResponseWriter, r *http.Request) {
+	targetUserID := pathParam(r.URL.Path, "/api/v1/admin/users/")
+	targetUserID = strings.TrimSuffix(targetUserID, "/account-type")
+	targetUserID = strings.TrimSuffix(targetUserID, "/role")
+	if targetUserID == "" {
+		respondWithError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	var req dto.ChangeAccountTypeRequest
+	if decodeJSON(w, r, &req) != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+	targetRole, err := models.NormalizeRole(req.DesiredRole())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Admin change bypasses the 24h user cooldown
+	if err := h.users.ChangeAccountType(targetUserID, targetRole, true); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "failed to update account type: "+err.Error())
+		return
+	}
+
+	updatedUser, err := h.users.GetUserByID(targetUserID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to reload user profile")
+		return
+	}
+
+	adminID := userIDFromContext(r.Context())
+	recordAudit(r, "admin.user_role_change", "UPDATE", "user", targetUserID,
+		fmt.Sprintf("Admin %s updated user %s role to %s (bypassing cooldown)", adminID, targetUserID, targetRole), true,
+		map[string]interface{}{
+			"admin_id":    adminID,
+			"target_user": targetUserID,
+			"new_role":    targetRole,
+		})
+
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("user account type successfully changed to %s", targetRole),
+		Data: map[string]interface{}{
+			"user": updatedUser,
+			"role": targetRole,
+		},
+	})
+}
+
+// SetUserStatus allows an admin to activate, suspend, or deactivate any user account.
+func (h *AdminHandler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
+	targetUserID := pathParam(r.URL.Path, "/api/v1/admin/users/")
+	targetUserID = strings.TrimSuffix(targetUserID, "/status")
+	if targetUserID == "" {
+		respondWithError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	var req dto.UpdateTechnicianStatusRequest
+	if decodeJSON(w, r, &req) != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	switch status {
+	case "active", "suspended", "inactive":
+	default:
+		respondWithError(w, http.StatusBadRequest, "status must be 'active', 'suspended', or 'inactive'")
+		return
+	}
+
+	if err := h.users.SetUserStatus(targetUserID, status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "failed to update user status: "+err.Error())
+		return
+	}
+
+	adminID := userIDFromContext(r.Context())
+	recordAudit(r, "admin.user_status_change", "UPDATE", "user", targetUserID,
+		fmt.Sprintf("Admin %s updated user %s status to %s", adminID, targetUserID, status), true,
+		map[string]interface{}{
+			"admin_id":    adminID,
+			"target_user": targetUserID,
+			"status":      status,
+		})
+
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("user status updated to %s", status),
+		Data: map[string]interface{}{
+			"user_id": targetUserID,
+			"status":  status,
+		},
+	})
 }
 
 func (h *AdminHandler) SettlementOutbox(w http.ResponseWriter, r *http.Request) {
@@ -630,6 +737,25 @@ func (h *AdminHandler) DatabaseOverview(w http.ResponseWriter, r *http.Request) 
 		"total":    totalDisputes,
 		"open":     openDisputes,
 		"resolved": resolvedDisputes,
+	}
+
+	var totalVerifications, pendingVerifications, idVerifiedCount, bizVerifiedCount, bothVerifiedCount, rejectedVerifications int
+	_ = h.db.QueryRowContext(ctx, `SELECT 
+		count(*),
+		count(*) FILTER (WHERE status='pending'),
+		count(*) FILTER (WHERE verification_badge='id_verified'),
+		count(*) FILTER (WHERE verification_badge='business_verified'),
+		count(*) FILTER (WHERE verification_badge='both'),
+		count(*) FILTER (WHERE status='rejected')
+	FROM identity_verifications`).Scan(&totalVerifications, &pendingVerifications, &idVerifiedCount, &bizVerifiedCount, &bothVerifiedCount, &rejectedVerifications)
+
+	stats["identity_verifications"] = map[string]interface{}{
+		"total":             totalVerifications,
+		"pending":           pendingVerifications,
+		"id_verified":       idVerifiedCount,
+		"business_verified": bizVerifiedCount,
+		"both":              bothVerifiedCount,
+		"rejected":          rejectedVerifications,
 	}
 
 	var dbSize string

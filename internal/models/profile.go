@@ -5,6 +5,10 @@ package models
 type PublicProfile struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
+	DisplayName    string `json:"display_name,omitempty"`
+	VerifiedName   string `json:"verified_name,omitempty"`
+	IdentityLabel  string `json:"identity_label,omitempty"`
+	IdentityStatus string `json:"identity_status,omitempty"`
 	Role           string `json:"role"`
 	AvatarURL      string `json:"avatar_url"`
 	ProfileSlug    string `json:"profile_slug"`

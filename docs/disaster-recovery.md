@@ -2,7 +2,7 @@
 
 ## Backup policy
 
-- Run `scripts/backup-postgres.sh` daily at 02:30 UTC via `ispilolite-backup.timer`.
+- Run `scripts/backup-postgres.sh` daily at 00:00 UTC (03:00 Nairobi / EAT) via `ispilolite-backup.timer`.
 - Keep 30 daily backups locally, weekly copies for 12 weeks, and monthly copies for 12 months.
 - Store an encrypted copy in a separate region/account (rclone remote or custom command).
 - Enable PostgreSQL WAL archiving for point-in-time recovery between full backups.
@@ -43,7 +43,7 @@ sudo cp deploy/systemd/ispilolite-backup.timer   /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ispilolite-backup.timer
 
-# 6. Prove it works now, not at 02:30.
+# 6. Prove it works now, not at the scheduled 00:00 UTC run.
 sudo systemctl start ispilolite-backup.service
 sudo journalctl -u ispilolite-backup.service -n 50 --no-pager
 sudo systemctl list-timers ispilolite-backup.timer

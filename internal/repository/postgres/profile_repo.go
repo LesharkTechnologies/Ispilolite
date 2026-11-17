@@ -18,7 +18,7 @@ func NewProfileRepository() (*ProfileRepository, error) {
 	return &ProfileRepository{db: db}, nil
 }
 
-const publicProfileSelect = `SELECT u.id,u.name,u.role,
+const publicProfileSelect = `SELECT u.id,u.name,COALESCE(u.display_name,''),COALESCE(u.verified_name,''),COALESCE(u.identity_status,'unverified'),u.role,
 	COALESCE(NULLIF(u.avatar_url,''),NULLIF(i.logo_url,''),''),
 	u.profile_slug,u.profile_path,
 	(SELECT count(*) FROM user_follows f JOIN users v ON v.id=f.follower_id AND v.status='active' AND v.role IN ('customer','isp','technician') WHERE f.followee_id=u.id),
@@ -30,10 +30,17 @@ const publicProfileSelect = `SELECT u.id,u.name,u.role,
 
 func scanPublicProfile(row *sql.Row) (*models.PublicProfile, error) {
 	profile := &models.PublicProfile{}
-	err := row.Scan(&profile.ID, &profile.Name, &profile.Role, &profile.AvatarURL,
+	err := row.Scan(&profile.ID, &profile.Name, &profile.DisplayName, &profile.VerifiedName, &profile.IdentityStatus, &profile.Role, &profile.AvatarURL,
 		&profile.ProfileSlug, &profile.ProfilePath, &profile.FollowerCount, &profile.FollowingCount, &profile.FavoriteCount, &profile.LikeCount)
 	if err != nil {
 		return nil, err
+	}
+	legal := profile.VerifiedName
+	if legal == "" {
+		legal = profile.Name
+	}
+	if legal != "" {
+		profile.IdentityLabel = "identity [" + legal + "]"
 	}
 	return profile, nil
 }

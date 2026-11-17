@@ -76,15 +76,15 @@ func (r *PromotionRepository) ResolveListing(ctx context.Context, actorID, role,
 			WHERE b.id=$1 AND b.status='active'
 			AND ($2::boolean OR b.owner_id=$3 OR EXISTS(SELECT 1 FROM billing_system_managers m WHERE m.billing_system_id=b.id AND m.user_id=$3))`, listingID, admin, actorID).Scan(&name, &internalPath)
 	case models.PromotionListingISP:
-		err = r.reader.QueryRowContext(ctx, `SELECT u.name,u.profile_path
+		err = r.reader.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(u.display_name,''), u.name), COALESCE(u.profile_path, '/u/'||COALESCE(u.profile_slug, u.id::text))
 			FROM users u JOIN isps i ON i.id=u.id
 			WHERE u.id=$1 AND u.role='isp' AND u.status='active' AND i.is_active
 			AND ($2::boolean OR u.id=$3)`, listingID, admin, actorID).Scan(&name, &internalPath)
 	case models.PromotionListingTechnician:
-		err = r.reader.QueryRowContext(ctx, `SELECT u.name,u.profile_path
-			FROM users u JOIN technicians t ON t.user_id=u.id
-			WHERE u.id=$1 AND u.role='technician' AND u.status='active'
-			AND ($2::boolean OR u.id=$3)`, listingID, admin, actorID).Scan(&name, &internalPath)
+		err = r.reader.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(u.display_name,''), u.name), COALESCE(u.profile_path, '/u/'||COALESCE(u.profile_slug, u.id::text))
+			FROM users u JOIN technicians t ON (t.user_id=u.id OR t.id=u.id)
+			WHERE (u.id=$1 OR t.id=$1) AND u.role='technician' AND u.status='active'
+			AND ($2::boolean OR u.id=$3 OR t.isp_id=$3 OR u.isp_id=$3 OR EXISTS(SELECT 1 FROM isp_technicians it WHERE it.technician_id=u.id AND it.isp_id=$3 AND it.status='active'))`, listingID, admin, actorID).Scan(&name, &internalPath)
 	default:
 		return nil, ErrPromotionForbidden
 	}

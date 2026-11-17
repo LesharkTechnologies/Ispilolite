@@ -135,6 +135,109 @@ test results. The customer confirms the proof. A job cannot transition to
 `completed` until at least one photo, a device serial, checklist data, and
 customer confirmation are present.
 
+### Job Handover & Escrow Release via Dynamic QR Pairing
+
+```http
+POST /api/v1/jobs/:id/pairing-qr
+POST /api/v1/my/jobs/:id/pairing-qr
+GET  /api/v1/jobs/:id/pairing-status
+GET  /api/v1/my/jobs/:id/pairing-status
+POST /api/v1/jobs/:id/confirm-pairing
+POST /api/v1/my/jobs/:id/confirm-pairing
+```
+
+When work is completed on-site, the technician generates a short-lived cryptographically signed QR code. The customer scans it with the Ispilolite customer app to verify authenticity, sign off on the job, approve the installation proof, and immediately release held escrow funds to the technician without manual intervention.
+
+#### 1. Technician generates Pairing QR Payload
+- **Endpoint**: `POST /api/v1/jobs/:id/pairing-qr` (or `/api/v1/my/jobs/:id/pairing-qr`)
+- **Authorized Roles**: `technician`, `isp`, `both`, `admin`
+- **Optional Request Body**:
+  ```json
+  {
+    "expires_in_seconds": 600,
+    "amount": 2500.00
+  }
+  ```
+- **Response** (`201 Created`):
+  ```json
+  {
+    "success": true,
+    "data": {
+      "job_id": "99b0c034-7ce0-4107-a363-2287c2c9d780",
+      "pairing_id": "b3e02b21-...",
+      "technician_id": "41da8018-...",
+      "customer_id": "78fa1019-...",
+      "amount": 2500.00,
+      "currency": "KES",
+      "verification_code": "489215",
+      "expires_at": "2026-11-17T20:30:00Z",
+      "expires_at_unix": 1794947400,
+      "expires_in_seconds": 600,
+      "signature": "sha256=a1b2c3d4e5f6...",
+      "deep_link": "ispilolite://jobs/99b0c034-7ce0-4107-a363-2287c2c9d780/pair?pairing_id=...&sig=...",
+      "qr_payload": "{\"app\":\"ispilolite\",\"action\":\"job_pairing\",\"job_id\":\"...\"}",
+      "status": "pending"
+    }
+  }
+  ```
+- **Cryptographic Scheme**: HMAC-SHA256 signature generated over canonical message:
+  `job_id=<id>|customer_id=<id>|technician_id=<id>|amount=%.2f|currency=<curr>|nonce=<pairing_id>|expires_at=<unix_timestamp>`
+
+#### 2. Customer scans QR & Confirms Handover
+- **Endpoint**: `POST /api/v1/jobs/:id/confirm-pairing` (or `/api/v1/my/jobs/:id/confirm-pairing`)
+- **Authorized Roles**: `customer`, `client`, `both`, `admin` (must be the requester of the job)
+- **Request Body**:
+  ```json
+  {
+    "pairing_id": "b3e02b21-...",
+    "signature": "sha256=a1b2c3d4e5f6...",
+    "expires_at": 1794947400,
+    "verification_code": "489215",
+    "notes": "Work completed and tested",
+    "rating": 5
+  }
+  ```
+- **Response** (`200 OK`):
+  ```json
+  {
+    "success": true,
+    "message": "Job pairing confirmed and handover signed off successfully",
+    "data": {
+      "job_id": "99b0c034-7ce0-4107-a363-2287c2c9d780",
+      "pairing_id": "b3e02b21-...",
+      "status": "confirmed",
+      "confirmed_at": "2026-11-17T20:25:30Z",
+      "job_status": "completed",
+      "escrow_released": true,
+      "released_amount": 2500.00,
+      "currency": "KES"
+    }
+  }
+  ```
+
+#### 3. Realtime Status Check & Polling
+- **Endpoint**: `GET /api/v1/jobs/:id/pairing-status`
+- **Response** (`200 OK`):
+  ```json
+  {
+    "success": true,
+    "data": {
+      "job_id": "99b0c034-7ce0-4107-a363-2287c2c9d780",
+      "pairing_id": "b3e02b21-...",
+      "status": "confirmed",
+      "expires_at": "2026-11-17T20:30:00Z",
+      "is_expired": false,
+      "confirmed_at": "2026-11-17T20:25:30Z",
+      "confirmed_by": "78fa1019-...",
+      "job_status": "completed",
+      "escrow_released": true,
+      "amount": 2500.00,
+      "currency": "KES"
+    }
+  }
+  ```
+
+
 ### Provider matches
 
 ```http
@@ -239,6 +342,684 @@ DELETE /admin/disputes/:id
 ```
 
 When an escrow is disputed, its status transitions to `disputed`. Users who opened the dispute can withdraw or cancel it with `DELETE /disputes/:id` or `POST /disputes/:id/withdraw`, which restores escrow status to `held` and updates dispute status to `cancelled`. Admins can resolve disputes (`PATCH /admin/disputes/:id` with resolution `release` or `refund`) or cancel them with `DELETE /admin/disputes/:id`.
+
+## Customer flags (trust and safety)
+
+Any authenticated user can report another account or a phone number. A report is
+never visible to the reported user, and the reporter sees only their own reports
+plus the admin feedback.
+
+```http
+POST   /flags
+GET    /my/flags?limit=50
+POST   /flags/:id/cancel
+GET    /admin/flags?status=&limit=50
+PATCH  /admin/flags/:id
+GET    /admin/monitoring?active=true&limit=50
+GET    /admin/monitoring/:user_id/activity?limit=50
+DELETE /admin/monitoring/:user_id
+```
+
+Report payload:
+
+```json
+{
+  "reported_user_id": "<uuid>",
+  "reported_phone": "+254700000000",
+  "category": "harassment",
+  "description": "What happened, when, and where (10-4000 characters).",
+  "image_urls": [
+    "https://res.cloudinary.com/<cloud>/image/upload/evidence-1.jpg",
+    "https://res.cloudinary.com/<cloud>/image/upload/evidence-2.jpg",
+    "https://res.cloudinary.com/<cloud>/image/upload/evidence-3.jpg"
+  ]
+}
+```
+
+- `reported_user_id` or `reported_phone` is required. A phone number is stored
+  as reported only; it never creates or impersonates an account.
+- `category` is one of `fraud`, `harassment`, `impersonation`, `spam`,
+  `payment_scam`, `fake_listing`, `abusive_content`, `other`.
+- `image_urls` accepts at most 3 Cloudinary delivery URLs, using the same
+  allowlist as every other media field.
+- Limits: 5 reports per reporter per 24 hours, and one open report per reported
+  account (duplicate open reports return `409`).
+
+Statuses are `pending` (new), `in_progress` (being reviewed), `approved`
+(upheld) and `cancelled` (withdrawn by the reporter or dismissed by an admin).
+Reports are created as `pending`.
+
+Admin review payload:
+
+```json
+{
+  "status": "approved",
+  "admin_feedback": "Evidence confirmed; account suspended.",
+  "account_action": "suspend"
+}
+```
+
+`account_action` is only valid when approving, and is one of:
+
+| Action | Effect |
+|---|---|
+| `none` | Record the decision and feedback only |
+| `monitor` | Add the user to the verification/monitoring list |
+| `suspend` | Set the account status to `suspended` **and** add it to the monitoring list |
+
+A suspended account cannot log in with OTP or password, and because phone
+numbers are unique it also cannot re-register with the same number. Suspension
+is not reversible through this endpoint; reinstating an account is a separate
+administrative decision.
+
+Monitored users generate entries in `monitored_activity` for watched actions:
+`job_application` (applying to a job), `job_claim` (being assigned/invited to a
+job), and `client_view` (ISP staff opening a client's job details). The IP
+address is stored for abuse investigation and is returned only in
+`GET /admin/monitoring/:user_id/activity`. Other users generate no rows: the
+insert is a single indexed `EXISTS` probe.
+
+`DELETE /admin/monitoring/:user_id` stops monitoring but does **not** reinstate
+a suspended account.
+
+## Identity Verification & Verified Status
+
+Technicians and platform users upload identity documents (e.g. National ID, Passport, Business Permit) linked to the phone number they verified their account with. The administrator reviews submissions, adds/confirms the verified name (which synchronizes across user, technician, and profile records), and sets the verification badge: `ID verified` (`id_verified`), `business verified` (`business_verified`), or `both` (`both`, when user is an ISP and technician).
+
+```http
+POST   /identity/verify
+POST   /technicians/identity-verification
+GET    /identity/status
+GET    /identity/me
+GET    /admin/identity-verifications?status=&badge=&limit=20&offset=0
+GET    /admin/identity-verifications/:id
+POST   /admin/identity-verifications/:id/verify
+POST   /admin/identity-verifications/:id/approve
+POST   /admin/identity-verifications/:id/reject
+```
+
+### Submission (Technician / User)
+
+Prerequisites: The account phone number must be verified (`users.is_verified == true`). The ID submission is automatically bound to this verified phone number.
+
+Payload for `POST /identity/verify` or `POST /technicians/identity-verification`:
+```json
+{
+  "id_photo_url": "https://res.cloudinary.com/.../id-front.jpg",
+  "id_photo_back_url": "https://res.cloudinary.com/.../id-back.jpg",
+  "document_type": "national_id",
+  "id_number": "12345678",
+  "notes": "National ID submission"
+}
+```
+
+### Self Status Check
+
+`GET /identity/status` or `GET /identity/me` returns current verification details, status, and badge:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "<verification-id>",
+    "user_id": "<user-id>",
+    "phone": "+254712345678",
+    "status": "approved",
+    "verification_badge": "id_verified",
+    "badge_label": "ID verified",
+    "verified_name": "John Kipkorir Tech",
+    "id_photo_url": "https://res.cloudinary.com/.../id-front.jpg",
+    "document_type": "national_id"
+  }
+}
+```
+
+### Admin Verification & Approval
+
+Payload for `POST /admin/identity-verifications/:id/verify` (or `/approve`):
+```json
+{
+  "verified_name": "John Kipkorir Tech",
+  "verification_badge": "id_verified",
+  "notes": "ID verified against registry records"
+}
+```
+Supported badge values:
+- `"id_verified"` (`"ID verified"`)
+- `"business_verified"` (`"business verified"`)
+- `"both"` (`"both"` / technician & ISP)
+
+Upon approval:
+- Sets `verified_name` and updates `name` across `users` and `technicians`.
+- Sets `identity_status` and `verification_badge` to the chosen status across `users`, `technicians`, `technician_profiles`, and `isps`.
+- Records audit log entry with IP, actor ID, action `UPDATE`, target `identity_verification`.
+
+### Admin Rejection
+
+Payload for `POST /admin/identity-verifications/:id/reject`:
+```json
+{
+  "rejection_reason": "ID photo is blurry and unreadable",
+  "notes": "Please re-upload a clear copy under good lighting"
+}
+```
+
+## User Display Names & Identity Representation
+
+Users, technicians, and ISPs can choose a custom public display name / moniker (placeholder example: *"I am Collins, but I am known as Leshark"*). The application displays this display name as the primary headline on cards and app views, while keeping their verified legal name visible in profiles under the identity tag: `identity [Collins Muthomi]`.
+
+```http
+PATCH  /my/display-name
+PUT    /my/display-name
+PATCH  /my/profile
+PUT    /my/profile
+```
+
+### Update Display Name Payload
+
+```json
+{
+  "display_name": "Leshark"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "display name updated successfully",
+  "data": {
+    "id": "7fa1...",
+    "display_name": "Leshark",
+    "name": "Collins Muthomi",
+    "verified_name": "Collins Muthomi",
+    "identity_label": "identity [Collins Muthomi]",
+    "identity_status": "id_verified"
+  }
+}
+```
+
+## E-Commerce Cards & Directory Discovery
+
+Public and mobile marketplace endpoints format ISPs, technicians, customers with jobs, and open jobs as product-like cards with icons, prices/budgets, locations, and badges.
+
+```http
+GET /technicians?county=&town=&skill=&limit=20
+GET /customers/with-jobs?county=&limit=20
+GET /jobs?county=&town=&service_type=&limit=20
+GET /cards/isps?county=&limit=20
+GET /cards/technicians?county=&town=&skill=&limit=20
+GET /cards/customers-with-jobs?county=&limit=20
+GET /cards/jobs?county=&town=&service_type=&limit=20
+GET /cards/overview?county=&limit=10
+GET /ecommerce/directory?county=&limit=10
+```
+
+### 1. Technician Cards (`GET /technicians` or `/cards/technicians`)
+Returns active technicians with display name as primary title, identity tag (e.g. `identity [Collins Muthomi]`), verification badge, avatar icon, hourly rate, skills, and rating:
+```json
+[
+  {
+    "id": "<tech-id>",
+    "user_id": "<user-id>",
+    "name": "Collins Muthomi",
+    "display_name": "Leshark",
+    "primary_name": "Leshark",
+    "verified_name": "Collins Muthomi",
+    "identity_label": "identity [Collins Muthomi]",
+    "identity_status": "id_verified",
+    "badge_label": "ID verified",
+    "icon_url": "https://...",
+    "rating": 4.9,
+    "jobs_done": 34,
+    "price_per_hour": 1500,
+    "skills": ["Fiber splicing", "WiFi setup"],
+    "county": "Nairobi",
+    "town": "Westlands",
+    "is_available": true
+  }
+]
+```
+
+### 2. Customers with Jobs Cards (`GET /customers/with-jobs` or `/cards/customers-with-jobs`)
+Returns customers who currently have active or open job requests:
+```json
+[
+  {
+    "customer_id": "<customer-id>",
+    "name": "Alice Wanjiku",
+    "display_name": "AliceTech",
+    "primary_name": "AliceTech",
+    "identity_label": "identity [Alice Wanjiku]",
+    "identity_status": "id_verified",
+    "icon_url": "https://...",
+    "county": "Nairobi",
+    "town": "Kilimani",
+    "active_jobs_count": 2,
+    "latest_job_title": "Fiber Installation",
+    "latest_job_service": "Fiber Installation",
+    "latest_job_budget": 5000
+  }
+]
+```
+
+### 3. Service Job Cards (`GET /jobs` or `/cards/jobs`)
+Returns open jobs formatted as product cards with category icons (`fiber`, `wifi`, `cctv`, `network`, `maintenance`), budget, location, and customer identity:
+```json
+[
+  {
+    "id": "<job-id>",
+    "title": "Fiber Splicing",
+    "service_type": "Fiber Splicing",
+    "icon_type": "fiber",
+    "description": "Restore broken fiber link to home office",
+    "budget": 4500,
+    "currency": "KES",
+    "county": "Nairobi",
+    "town": "Parklands",
+    "status": "open",
+    "customer_id": "<cust-id>",
+    "customer_name": "Alice Wanjiku",
+    "customer_display_name": "AliceTech",
+    "customer_primary_name": "AliceTech",
+    "customer_identity": "identity [Alice Wanjiku]",
+    "customer_badge": "ID verified",
+    "applications_count": 3
+  }
+]
+```
+
+### 4. Marketplace Directory Overview (`GET /cards/overview` or `/ecommerce/directory`)
+Aggregates all 4 product-card collections into a single payload for instant rendering of the app's e-commerce marketplace view:
+```json
+{
+  "isps": [...],
+  "technicians": [...],
+  "customers_with_jobs": [...],
+  "jobs": [...],
+  "total_isps": 14,
+  "total_technicians": 56,
+  "total_customers": 28,
+  "total_jobs": 42
+}
+```
+
+## User Display Names & Identity Representation
+
+Users, technicians, and ISPs can choose a custom public display name / moniker (placeholder example: *"I am Collins, but I am known as Leshark"*). The application displays this display name as the primary headline on cards and app views, while keeping their verified legal name visible in profiles under the identity tag: `identity [Collins Muthomi]`.
+
+```http
+PATCH  /my/display-name
+PUT    /my/display-name
+PATCH  /my/profile
+PUT    /my/profile
+```
+
+### Update Display Name Payload
+
+```json
+{
+  "display_name": "Leshark"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "display name updated successfully",
+  "data": {
+    "id": "7fa1...",
+    "display_name": "Leshark",
+    "name": "Collins Muthomi",
+    "verified_name": "Collins Muthomi",
+    "identity_label": "identity [Collins Muthomi]",
+    "identity_status": "id_verified"
+  }
+}
+```
+
+## E-Commerce Cards & Directory Discovery
+
+Public and mobile marketplace endpoints format ISPs, technicians, customers with jobs, and open jobs as product-like cards with icons, prices/budgets, locations, and badges.
+
+```http
+GET /technicians?county=&town=&skill=&limit=20
+GET /customers/with-jobs?county=&limit=20
+GET /jobs?county=&town=&service_type=&limit=20
+GET /cards/isps?county=&limit=20
+GET /cards/technicians?county=&town=&skill=&limit=20
+GET /cards/customers-with-jobs?county=&limit=20
+GET /cards/jobs?county=&town=&service_type=&limit=20
+GET /cards/overview?county=&limit=10
+GET /ecommerce/directory?county=&limit=10
+```
+
+### 1. Technician Cards (`GET /technicians` or `/cards/technicians`)
+Returns active technicians with display name as primary title, identity tag (e.g. `identity [Collins Muthomi]`), verification badge, avatar icon, hourly rate, skills, and rating:
+```json
+[
+  {
+    "id": "<tech-id>",
+    "user_id": "<user-id>",
+    "name": "Collins Muthomi",
+    "display_name": "Leshark",
+    "primary_name": "Leshark",
+    "verified_name": "Collins Muthomi",
+    "identity_label": "identity [Collins Muthomi]",
+    "identity_status": "id_verified",
+    "badge_label": "ID verified",
+    "icon_url": "https://...",
+    "rating": 4.9,
+    "jobs_done": 34,
+    "price_per_hour": 1500,
+    "skills": ["Fiber splicing", "WiFi setup"],
+    "county": "Nairobi",
+    "town": "Westlands",
+    "is_available": true
+  }
+]
+```
+
+### 2. Customers with Jobs Cards (`GET /customers/with-jobs` or `/cards/customers-with-jobs`)
+Returns customers who currently have active or open job requests:
+```json
+[
+  {
+    "customer_id": "<customer-id>",
+    "name": "Alice Wanjiku",
+    "display_name": "AliceTech",
+    "primary_name": "AliceTech",
+    "identity_label": "identity [Alice Wanjiku]",
+    "identity_status": "id_verified",
+    "icon_url": "https://...",
+    "county": "Nairobi",
+    "town": "Kilimani",
+    "active_jobs_count": 2,
+    "latest_job_title": "Fiber Installation",
+    "latest_job_service": "Fiber Installation",
+    "latest_job_budget": 5000
+  }
+]
+```
+
+### 3. Service Job Cards (`GET /jobs` or `/cards/jobs`)
+Returns open jobs formatted as product cards with category icons (`fiber`, `wifi`, `cctv`, `network`, `maintenance`), budget, location, and customer identity:
+```json
+[
+  {
+    "id": "<job-id>",
+    "title": "Fiber Splicing",
+    "service_type": "Fiber Splicing",
+    "icon_type": "fiber",
+    "description": "Restore broken fiber link to home office",
+    "budget": 4500,
+    "currency": "KES",
+    "county": "Nairobi",
+    "town": "Parklands",
+    "status": "open",
+    "customer_id": "<cust-id>",
+    "customer_name": "Alice Wanjiku",
+    "customer_display_name": "AliceTech",
+    "customer_primary_name": "AliceTech",
+    "customer_identity": "identity [Alice Wanjiku]",
+    "customer_badge": "ID verified",
+    "applications_count": 3
+  }
+]
+```
+
+### 4. Marketplace Directory Overview (`GET /cards/overview` or `/ecommerce/directory`)
+Aggregates all 4 product-card collections into a single payload for instant rendering of the app's e-commerce marketplace view:
+```json
+{
+  "isps": [...],
+  "technicians": [...],
+  "customers_with_jobs": [...],
+  "jobs": [...],
+  "total_isps": 14,
+  "total_technicians": 56,
+  "total_customers": 28,
+  "total_jobs": 42
+}
+```
+
+## Account Type Switching & ISP Controls
+
+Users can transition between account types: Customer (`customer` / `C`), Technician (`technician` / `T`), ISP (`isp` / `I`), and Dual Role (`both` / `T & I`).
+
+### 1. User Self-Service Account Type Switch
+```http
+PATCH /my/account-type
+POST  /my/account-type
+PUT   /my/account-type
+PATCH /users/account-type
+```
+
+#### Cooldown Constraint
+- **Strict 24-hour rate limit**: Once an account type change occurs, the timestamp is recorded (`role_changed_at`).
+- If an account type change is requested again within 24 hours, the request is rejected with `429 Too Many Requests` indicating the remaining cooldown time.
+- If immediate modification is needed before the 24 hours expire, users must contact an administrator for review.
+
+#### Request Payload
+```json
+{
+  "account_type": "technician"
+}
+```
+*Aliases accepted*: `"customer"` / `"c"`, `"technician"` / `"t"`, `"isp"` / `"i"`, `"both"` / `"t&i"`.
+
+#### Successful Response (`200 OK`)
+Returns the updated user profile and a freshly minted JWT token with the new role so the client can immediately continue making authenticated requests:
+```json
+{
+  "success": true,
+  "message": "account type successfully changed to technician",
+  "data": {
+    "user": {
+      "id": "user-uuid",
+      "name": "Collins Muthomi",
+      "role": "technician",
+      "status": "active"
+    },
+    "token": "eyJhbGciOi...",
+    "token_type": "Bearer",
+    "role": "technician",
+    "role_changed_at": "2026-11-17T19:30:00Z",
+    "cooldown_hours": 24
+  }
+}
+```
+
+#### Cooldown Rejection Response (`429 Too Many Requests`)
+```json
+{
+  "success": false,
+  "error": "Account type can only be changed once every 24 hours. Please wait 21h 45m or contact admin for review."
+}
+```
+
+---
+
+### 2. ISP Technician Access Controls & Status Updates
+ISPs can manage technicians belonging to their company, including changing their user type or suspending/deactivating them to prevent system access:
+
+```http
+PATCH /my/technicians/:id/status
+POST  /my/technicians/:id/suspend
+POST  /my/technicians/:id/activate
+PATCH /my/technicians/:id/account-type
+PUT   /my/technicians/:id/account-type
+```
+
+- When status is set to `"suspended"` or `"inactive"`:
+  - All active authentication/refresh sessions for that technician are immediately revoked.
+  - Technician's availability in marketplace/directory searches is disabled.
+  - Subsequent requests with existing JWTs are immediately rejected by authentication middleware (`401 Unauthorized: account is not active`).
+- When status is set to `"active"`:
+  - Account is reactivated, allowing login and technician marketplace visibility.
+- ISPs can also change technician roles directly via `PATCH /my/technicians/:id/account-type`, which bypasses the standard 24h user cooldown.
+
+---
+
+### 3. Admin Account Overrides
+Administrators have full access to switch any user's role or status at any time, bypassing cooldown restrictions:
+
+```http
+PATCH /admin/users/:id/account-type
+PUT   /admin/users/:id/account-type
+PATCH /admin/users/:id/role
+PATCH /admin/users/:id/status
+```
+
+## Profile Completion & Uploading Missing Information
+
+When users register or switch account types (e.g. from Customer to Technician or ISP), they often have unfulfilled fields (such as ID photos, skills, hourly rate, bio, or ISP company logo). Ispilolite provides dedicated inspection and upload endpoints so users know exactly what is missing and can submit everything in one place.
+
+### 1. Check Missing Fields & Profile Completion Checklist
+```http
+GET /my/profile/completion
+GET /my/missing-fields
+```
+
+Returns the completion percentage, lists what has been completed, and provides an actionable checklist of missing fields with exact target endpoints:
+
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "user-uuid",
+    "role": "technician",
+    "completion_percentage": 55,
+    "is_complete": false,
+    "filled_count": 5,
+    "total_required": 9,
+    "filled_fields": [
+      "phone",
+      "name",
+      "location"
+    ],
+    "missing_fields": [
+      {
+        "field": "display_name",
+        "label": "Display Name / Moniker",
+        "category": "profile",
+        "description": "Public moniker shown on discovery cards (e.g. 'Leshark')",
+        "endpoint": "/api/v1/my/display-name",
+        "method": "PATCH"
+      },
+      {
+        "field": "id_photo_url",
+        "label": "Identity Verification Document",
+        "category": "identity",
+        "description": "Upload ID photo/passport or business permit to receive verified badge",
+        "endpoint": "/api/v1/identity/verify",
+        "method": "POST"
+      },
+      {
+        "field": "bio",
+        "label": "Technician Bio / Experience",
+        "category": "services",
+        "description": "Describe your experience, past installations, and specialties",
+        "endpoint": "/api/v1/my/portfolio/profile",
+        "method": "PUT"
+      },
+      {
+        "field": "price_per_hour",
+        "label": "Hourly Service Rate (KES)",
+        "category": "services",
+        "description": "Set your hourly rate for marketplace card display",
+        "endpoint": "/api/v1/my/portfolio/profile",
+        "method": "PUT"
+      },
+      {
+        "field": "skills",
+        "label": "Technical Skills",
+        "category": "services",
+        "description": "Add skills (fiber, wifi, cctv, splicing, networking)",
+        "endpoint": "/api/v1/my/skills",
+        "method": "POST"
+      }
+    ],
+    "identity_status": "unverified",
+    "upload_instructions": {
+      "display_name": "PATCH /api/v1/my/display-name (set public moniker e.g. 'Leshark')",
+      "fill_missing": "PATCH /api/v1/my/profile/fill-missing (submit all unfulfilled fields in one payload)",
+      "identity_verify": "POST /api/v1/identity/verify (id_photo_url, id_photo_back_url, id_number, document_type)",
+      "media_signature": "POST /api/v1/media/upload-signature (for direct Cloudinary client-side upload)",
+      "media_upload": "POST /api/v1/media/upload (multipart form: kind=profile, portfolio, identity_document, isp_logo)",
+      "packages": "POST /api/v1/my/packages (create ISP packages)",
+      "portfolio_profile": "PUT /api/v1/my/portfolio/profile (technician bio, hourly rate, skills, availability)",
+      "skills": "POST /api/v1/my/skills (add specific technician skills)"
+    }
+  }
+}
+```
+
+---
+
+### 2. Single Unified Endpoint to Submit Missing Information
+Users do not need to call 5 different endpoints; they can submit any or all unfulfilled fields in a single request:
+
+```http
+PATCH /my/profile/fill-missing
+POST  /my/profile/fill-missing
+PATCH /my/profile/complete
+```
+
+#### Request Payload
+```json
+{
+  "display_name": "Leshark",
+  "bio": "Experienced fiber splicing & CCTV technician with 5+ years experience across Nairobi and Kiambu.",
+  "price_per_hour": 1500,
+  "skills": ["Fiber splicing", "CCTV installation", "WiFi setup", "Structured cabling"],
+  "county": "Nairobi",
+  "town": "Westlands",
+  "village": "Parklands",
+  "location": {
+    "lat": -1.264,
+    "lng": 36.804
+  },
+  "id_photo_url": "https://res.cloudinary.com/demo/image/upload/id_front.jpg",
+  "id_photo_back_url": "https://res.cloudinary.com/demo/image/upload/id_back.jpg",
+  "id_number": "12345678",
+  "document_type": "national_id"
+}
+```
+
+#### Response (`200 OK`)
+Returns the updated user profile and fresh completion report:
+```json
+{
+  "success": true,
+  "message": "profile information updated successfully",
+  "data": {
+    "user": { ... },
+    "completion_report": {
+      "user_id": "user-uuid",
+      "role": "technician",
+      "completion_percentage": 100,
+      "is_complete": true,
+      "filled_count": 9,
+      "total_required": 9,
+      "filled_fields": [ ... ],
+      "missing_fields": []
+    }
+  }
+}
+```
+
+---
+
+### 3. File & Document Upload Endpoints
+
+| Upload Kind | Target Media Endpoint | Allowed Types | Purpose |
+|---|---|---|---|
+| ID Photo / Permit | `POST /media/upload?kind=identity_document` or `id_photo` | JPEG, PNG, WEBP, HEIC | Front/back national ID, passport, or business permit |
+| Profile Avatar | `POST /media/upload?kind=profile` | JPEG, PNG, WEBP | User avatar |
+| ISP Logo | `POST /media/upload?kind=isp_logo` | JPEG, PNG, WEBP | Company logo for marketplace cards |
+| Work Portfolio | `POST /media/upload?kind=portfolio` | JPEG, PNG, WEBP | Past installation photos |
+| Cloudinary Signature | `POST /media/upload-signature` | JSON | Direct browser-to-cloud signed upload |
 
 ## User follows (customer, technician, ISP)
 
@@ -1235,7 +2016,10 @@ Customer login is phone-only and OTP-based:
 The response sends an OTP. Submit that OTP to `/auth/verify-otp`; successful verification returns the JWT pair.
 
 The OTP in the SMS is the same server-generated code stored in Redis for that
-user. A new code replaces the previous code only after the resend cooldown.
+user. Codes are persisted only as keyed HMAC-SHA256 digests (`OTP_HASH_KEY`,
+falling back to `JWT_SECRET`); the plaintext code exists only in the SMS
+message and the verification request. Verification uses constant-time
+comparison. A new code replaces the previous code only after the resend cooldown.
 OTP requests are protected by a 30-second per-phone cooldown, a maximum of 3
 requests per phone in 15 minutes, and a maximum of 10 requests per source IP
 in 15 minutes. Verification guesses are limited to 5 attempts per active code.

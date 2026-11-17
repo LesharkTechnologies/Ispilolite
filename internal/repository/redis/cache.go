@@ -7,6 +7,7 @@ import (
 
 	goredis "github.com/go-redis/redis/v8"
 	"ispilolite/pkg/database"
+	otphash "ispilolite/pkg/otp"
 )
 
 type CacheRepo struct{ client *goredis.Client }
@@ -19,10 +20,14 @@ func NewCacheRepo() (*CacheRepo, error) {
 	return &CacheRepo{client: client}, nil
 }
 
-func (r *CacheRepo) SetOTP(userID, otp string, expiration time.Duration) error {
-	return r.client.Set(context.Background(), "otp:"+userID, otp, expiration).Err()
+// SetOTP stores only a keyed hash of the verification code, never the
+// plaintext code, so a Redis snapshot or memory dump cannot expose codes.
+func (r *CacheRepo) SetOTP(userID, code string, expiration time.Duration) error {
+	return r.client.Set(context.Background(), "otp:"+userID, otphash.Hash(code), expiration).Err()
 }
 
+// GetOTP returns the stored OTP digest for constant-time comparison through
+// otp.Matches. It errors when no active code exists.
 func (r *CacheRepo) GetOTP(userID string) (string, error) {
 	return r.client.Get(context.Background(), "otp:"+userID).Result()
 }

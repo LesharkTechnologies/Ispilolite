@@ -1,5 +1,7 @@
 package dto
 
+import "time"
+
 // APIResponse is the standard success/error envelope used across the API.
 type APIResponse struct {
 	Success bool        `json:"success"`
@@ -104,3 +106,47 @@ type TechStatisticsDTO struct {
 	CompletedJobs int `json:"completed_jobs"`
 	PendingJobs   int `json:"pending_jobs"`
 }
+
+type JobPairingQRResponse struct {
+	JobID            string    `json:"job_id"`
+	PairingID        string    `json:"pairing_id"`
+	TechnicianID     string    `json:"technician_id"`
+	CustomerID       string    `json:"customer_id"`
+	Amount           float64   `json:"amount"`
+	Currency         string    `json:"currency"`
+	VerificationCode string    `json:"verification_code"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	ExpiresAtUnix    int64     `json:"expires_at_unix"`
+	ExpiresInSeconds int       `json:"expires_in_seconds"`
+	Signature        string    `json:"signature"`
+	DeepLink         string    `json:"deep_link"`
+	QRPayload        string    `json:"qr_payload"`
+	Status           string    `json:"status"`
+}
+
+type ConfirmJobPairingResponse struct {
+	JobID          string     `json:"job_id"`
+	PairingID      string     `json:"pairing_id"`
+	Status         string     `json:"status"`
+	ConfirmedAt    time.Time  `json:"confirmed_at"`
+	JobStatus      string     `json:"job_status"`
+	EscrowReleased bool       `json:"escrow_released"`
+	ReleasedAmount float64    `json:"released_amount,omitempty"`
+	Currency       string     `json:"currency,omitempty"`
+	Message        string     `json:"message"`
+}
+
+type JobPairingStatusResponse struct {
+	JobID          string     `json:"job_id"`
+	PairingID      string     `json:"pairing_id"`
+	Status         string     `json:"status"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	IsExpired      bool       `json:"is_expired"`
+	ConfirmedAt    *time.Time `json:"confirmed_at,omitempty"`
+	ConfirmedBy    string     `json:"confirmed_by,omitempty"`
+	JobStatus      string     `json:"job_status"`
+	EscrowReleased bool       `json:"escrow_released"`
+	Amount         float64    `json:"amount"`
+	Currency       string     `json:"currency"`
+}
+

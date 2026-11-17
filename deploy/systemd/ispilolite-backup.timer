@@ -2,7 +2,8 @@
 Description=Daily Ispilolite PostgreSQL backup
 
 [Timer]
-OnCalendar=*-*-* 02:30:00 UTC
+# 00:00 UTC = 03:00 Nairobi (EAT, UTC+3). Daily off-peak backup.
+OnCalendar=*-*-* 00:00:00 UTC
 Persistent=true
 RandomizedDelaySec=15m
 Unit=ispilolite-backup.service

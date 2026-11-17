@@ -17,6 +17,7 @@ import (
 	"ispilolite/internal/repository"
 	"ispilolite/internal/services/notification"
 	"ispilolite/internal/utils"
+	otphash "ispilolite/pkg/otp"
 
 	"github.com/lib/pq"
 )
@@ -354,7 +355,9 @@ func (s *AuthService) VerifyOTP(userID, otp string) (*models.User, error) {
 		return nil, ErrInvalidOTP
 	}
 
-	if strings.TrimSpace(otp) != storedOTP {
+	// The stored value is a keyed hash; compare digests in constant time so
+	// verification timing does not leak how much of the code matched.
+	if !otphash.Matches(strings.TrimSpace(otp), storedOTP) {
 		return nil, ErrInvalidOTP
 	}
 

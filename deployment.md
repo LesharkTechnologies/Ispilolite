@@ -174,6 +174,11 @@ JWT_ISSUER=ispilolite
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=168h
 
+# --- OTP hashing (REQUIRED in production) ---
+# Verification codes are stored in Redis only as HMAC-SHA256 digests keyed by
+# this secret. Rotating it instantly invalidates every outstanding OTP.
+OTP_HASH_KEY=<64+ random characters, e.g. openssl rand -hex 32>
+
 # --- Database (writer + reader share the same local Postgres) ---
 DATABASE_URL=postgres://ispilo_app:<STRONG_DB_PASSWORD>@127.0.0.1:5432/ispilolite?sslmode=disable
 DB_WRITER_MAX_CONNS=25
@@ -222,7 +227,8 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 Generate secrets:
 
 ```bash
-openssl rand -hex 32   # JWT_SECRET
+openssl rand -hex 32    # JWT_SECRET
+openssl rand -hex 32    # OTP_HASH_KEY (verify codes are hashed at rest)
 openssl rand -base64 24 # DB / Redis / Rabbit passwords
 ```
 

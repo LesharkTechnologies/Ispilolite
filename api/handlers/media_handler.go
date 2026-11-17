@@ -48,13 +48,15 @@ type mediaKind struct {
 }
 
 var mediaKinds = map[string]mediaKind{
-	"profile":            {Folder: "profiles", MaxBytes: mediaMaxProfile, Roles: mediaRoles("customer", "technician", "isp", "admin")},
-	"installation_proof": {Folder: "installation-proofs", MaxBytes: mediaMaxProof, Roles: mediaRoles("technician", "isp", "admin")},
-	"portfolio":          {Folder: "technician-portfolio", MaxBytes: mediaMaxProof, Roles: mediaRoles("technician", "admin")},
-	"promotion":          {Folder: "promotions", MaxBytes: mediaMaxPromotion, Roles: mediaRoles("isp", "admin")},
-	"isp_logo":           {Folder: "isp-logos", MaxBytes: mediaMaxProfile, Roles: mediaRoles("isp", "admin")},
-	"review":             {Folder: "reviews", MaxBytes: mediaMaxProfile, Roles: mediaRoles("customer", "admin")},
-	"chat":               {Folder: "chat", MaxBytes: mediaMaxChat, Roles: mediaRoles("customer", "technician", "isp", "admin")},
+	"profile":            {Folder: "profiles", MaxBytes: mediaMaxProfile, Roles: mediaRoles("customer", "technician", "isp", "admin", "both")},
+	"installation_proof": {Folder: "installation-proofs", MaxBytes: mediaMaxProof, Roles: mediaRoles("technician", "isp", "admin", "both")},
+	"portfolio":          {Folder: "technician-portfolio", MaxBytes: mediaMaxProof, Roles: mediaRoles("technician", "admin", "both")},
+	"promotion":          {Folder: "promotions", MaxBytes: mediaMaxPromotion, Roles: mediaRoles("isp", "admin", "both")},
+	"isp_logo":           {Folder: "isp-logos", MaxBytes: mediaMaxProfile, Roles: mediaRoles("isp", "admin", "both")},
+	"review":             {Folder: "reviews", MaxBytes: mediaMaxProfile, Roles: mediaRoles("customer", "admin", "both")},
+	"chat":               {Folder: "chat", MaxBytes: mediaMaxChat, Roles: mediaRoles("customer", "technician", "isp", "admin", "both")},
+	"identity_document":  {Folder: "identity-documents", MaxBytes: mediaMaxProof, Roles: mediaRoles("customer", "technician", "isp", "admin", "both")},
+	"id_photo":           {Folder: "identity-documents", MaxBytes: mediaMaxProof, Roles: mediaRoles("customer", "technician", "isp", "admin", "both")},
 }
 
 // MediaHandler issues Cloudinary upload signatures scoped to the authenticated
