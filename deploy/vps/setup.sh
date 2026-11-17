@@ -65,18 +65,34 @@ echo -e "\n${YELLOW}[5/8] Setting up environment configuration at ${APP_DIR}/.en
 if [ ! -f "${APP_DIR}/.env" ]; then
     JWT_SECRET=$(openssl rand -hex 32)
     REFRESH_SECRET=$(openssl rand -hex 32)
+    OTP_HASH_KEY=$(openssl rand -hex 32)
+    ADMIN_USER_VAL="${ADMIN_USERNAME:-admin}"
+    ADMIN_PASS_VAL="${ADMIN_PASSWORD:-$(openssl rand -base64 16)}"
     cat <<EOF > "${APP_DIR}/.env"
 ENVIRONMENT=production
 PORT=8001
+CONFIG_PATH=config/config.yaml
 BASE_URL=https://lite.ispilo.co.ke
 DATABASE_URL=postgres://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}?sslmode=disable
 DB_WRITER_DSN=postgres://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}?sslmode=disable
 DB_READER_DSN=postgres://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}?sslmode=disable
 REDIS_URL=redis://127.0.0.1:6379/0
 JWT_SECRET=${JWT_SECRET}
+JWT_ISSUER=ispilolite
+JWT_ACCESS_TTL=15m
+JWT_REFRESH_TTL=168h
 REFRESH_SECRET=${REFRESH_SECRET}
-DOCUMENT_ROOT=${STORAGE_DIR}/documents
+OTP_HASH_KEY=${OTP_HASH_KEY}
+
+# --- Super Admin Credentials (Auto-bootstrapped to DB on startup) ---
+ADMIN_USERNAME=${ADMIN_USER_VAL}
+ADMIN_PASSWORD=${ADMIN_PASS_VAL}
+ADMIN_EMAIL=admin@ispilo.co.ke
+ADMIN_PHONE=+254700000000
+
+DOCUMENT_STORAGE_ROOT=${STORAGE_DIR}/documents
 AUDIT_ARCHIVE_ROOT=${STORAGE_DIR}/audit
+DOCUMENT_ROOT=${STORAGE_DIR}/documents
 TRUSTED_PROXIES=127.0.0.1,::1
 METRICS_TOKEN=$(openssl rand -hex 16)
 MIGRATIONS_PATH=${APP_DIR}/migrations
@@ -88,6 +104,8 @@ EOF
     chown root:"${APP_USER}" "${APP_DIR}/.env"
     chmod 640 "${APP_DIR}/.env"
     echo -e "${GREEN}Created new configuration file at ${APP_DIR}/.env.${NC}"
+    echo -e "${GREEN}Provisioned Admin User: ${ADMIN_USER_VAL}${NC}"
+    echo -e "${GREEN}Provisioned Admin Password: ${ADMIN_PASS_VAL}${NC}"
 else
     echo -e "${GREEN}Configuration file already exists at ${APP_DIR}/.env.${NC}"
 fi
@@ -96,12 +114,13 @@ fi
 echo -e "\n${YELLOW}[6/8] Building application binaries...${NC}"
 if ! command -v go &>/dev/null; then
     echo -e "${YELLOW}Installing Go toolchain...${NC}"
-    GO_VERSION="1.22.6"
+    GO_VERSION="${GO_VERSION:-1.24.0}"
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
     rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
     rm /tmp/go.tar.gz
     export PATH=$PATH:/usr/local/go/bin
 fi
+export GOTOOLCHAIN=auto
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -161,6 +180,7 @@ echo -e "${GREEN}   Ispilolite Deployment Completed Successfully!     ${NC}"
 echo -e "${GREEN}======================================================${NC}"
 echo -e "API Status:        $(systemctl is-active ispilolite-api)"
 echo -e "Health Check:      curl -i http://127.0.0.1:8001/health"
-echo -e "Config File:       ${CONFIG_DIR}/ispilolite.env"
+echo -e "Config File:       ${APP_DIR}/.env"
 echo -e "Logs:              journalctl -u ispilolite-api -f"
+echo -e "Admin Login API:   POST https://lite.ispilo.co.ke/api/v1/auth/admin/login"
 echo -e "\nNext step for SSL: certbot --nginx -d lite.ispilo.co.ke"

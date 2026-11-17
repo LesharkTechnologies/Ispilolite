@@ -179,6 +179,13 @@ JWT_REFRESH_TTL=168h
 # this secret. Rotating it instantly invalidates every outstanding OTP.
 OTP_HASH_KEY=<64+ random characters, e.g. openssl rand -hex 32>
 
+# --- Super Admin Account (Environment Provisioned) ---
+# Username and password used by administrators and audit officers to sign in with full system access.
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<STRONG_ADMIN_PASSWORD>
+ADMIN_EMAIL=admin@ispilo.co.ke
+ADMIN_PHONE=+254700000000
+
 # --- Database (writer + reader share the same local Postgres) ---
 DATABASE_URL=postgres://ispilo_app:<STRONG_DB_PASSWORD>@127.0.0.1:5432/ispilolite?sslmode=disable
 DB_WRITER_MAX_CONNS=25
