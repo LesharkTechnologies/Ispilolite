@@ -2,6 +2,8 @@ module ispilolite
 
 go 1.26.0
 
+toolchain go1.27.4
+
 require (
 	github.com/XSAM/otelsql v0.30.0
 	github.com/alicebob/miniredis/v2 v2.34.0
