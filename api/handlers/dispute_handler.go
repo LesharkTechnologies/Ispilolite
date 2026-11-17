@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ func (h *DisputeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondWithErrorRaw(w, 400, err.Error())
 		return
 	}
+	recordAudit(r, "dispute.create", "CREATE", "dispute", item.ID, "User opened dispute for job "+jobID+": "+input.Reason, true, map[string]interface{}{"job_id": jobID, "dispute_id": item.ID, "reason": input.Reason})
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Data: item})
 }
 func (h *DisputeHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +86,7 @@ func (h *DisputeHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		respondWithErrorRaw(w, 400, err.Error())
 		return
 	}
+	recordAudit(r, "dispute.resolve", "UPDATE", "dispute", id, fmt.Sprintf("Admin resolved dispute %s with resolution: %s", id, input.Resolution), true, map[string]interface{}{"dispute_id": id, "resolution": input.Resolution, "amount": input.Amount})
 	respondWithJSON(w, 202, dto.APIResponse{Success: true, Message: "settlement queued"})
 }
 

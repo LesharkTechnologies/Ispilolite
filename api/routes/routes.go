@@ -355,9 +355,20 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/my/speed-tests", authHandlerByRole(map[string]http.HandlerFunc{
 		"customer": speedTestHandler.Mine, "technician": speedTestHandler.Mine, "isp": speedTestHandler.Mine,
 	}))
+	api.GET("/my/speed-tests/:id", authHandlerByRole(map[string]http.HandlerFunc{
+		"customer": speedTestHandler.GetSpeedTest, "technician": speedTestHandler.GetSpeedTest, "isp": speedTestHandler.GetSpeedTest,
+	}))
+	api.DELETE("/my/speed-tests/:id", authHandlerByRole(map[string]http.HandlerFunc{
+		"customer": speedTestHandler.DeleteSpeedTest, "technician": speedTestHandler.DeleteSpeedTest, "isp": speedTestHandler.DeleteSpeedTest,
+	}))
 	api.GET("/my/speed-tests/stats", authHandler("isp", speedTestHandler.ISPStats))
+	api.GET("/speed-tests/analytics", stdHandler(speedTestHandler.CountyStats))
+	api.GET("/geo/speed-stats", stdHandler(speedTestHandler.CountyStats))
+	api.GET("/geo/speed-stats/towns", stdHandler(speedTestHandler.TownStats))
+	api.GET("/geo/county-speed-benchmarks", stdHandler(speedTestHandler.CountyBenchmarks))
 	api.GET("/admin/speed-tests", authHandler("admin", speedTestHandler.AdminQueue))
 	api.PATCH("/admin/speed-tests/:id", authHandler("admin", speedTestHandler.AdminModerate))
+	api.POST("/admin/speed-tests/aggregate", authHandler("admin", speedTestHandler.AdminAggregate))
 
 	api.GET("/isps", stdHandler(isp.GetISPs))
 	api.GET("/isps/:id", ispDispatcher(isp))
@@ -511,9 +522,9 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.POST("/jobs/:id/messages/read", authHandler("", chatHandler.MarkRead))
 	api.DELETE("/jobs/messages/:id", authHandler("", chatHandler.Delete))
 	api.DELETE("/chat/messages/:id", authHandler("", chatHandler.Delete))
-	api.POST("/jobs/:id/payments", authHandler("customer", paymentHandler.Initiate))
+	api.POST("/jobs/:id/payments", idempotentAuthHandler("customer", paymentHandler.Initiate, idempotencyStore))
 	api.GET("/jobs/:id/escrow", authHandler("", paymentHandler.GetEscrow))
-	api.POST("/escrows/:id/release", authHandler("customer", paymentHandler.Release))
+	api.POST("/escrows/:id/release", idempotentAuthHandler("customer", paymentHandler.Release, idempotencyStore))
 	api.POST("/jobs/:id/warranty-claims", authHandler("customer", warrantyHandler.Create))
 	api.POST("/jobs/:id/disputes", authHandler("", disputeHandler.Create))
 	api.GET("/disputes/:id", authHandler("", disputeHandler.Get))
@@ -575,7 +586,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PUT("/admin/packages/:id/moderate", authHandler("admin", admin.ModeratePackage))
 	api.POST("/admin/audit/export", authHandler("admin", admin.AuditExport))
 	api.GET("/admin/audit", authHandler("admin", admin.AuditList))
+	api.GET("/admin/audit-logs", authHandler("admin", admin.AuditList))
 	api.DELETE("/admin/audit", authHandler("admin", admin.AuditDelete))
+	api.GET("/admin/database/overview", authHandler("admin", admin.DatabaseOverview))
+	api.GET("/admin/database/stats", authHandler("admin", admin.DatabaseOverview))
 	api.POST("/admin/retention/purge-expired", authHandler("admin", admin.PurgeExpiredRetention))
 	api.DELETE("/admin/retention/expired", authHandler("admin", admin.PurgeExpiredRetention))
 	api.POST("/admin/approve-deletion", authHandler("admin", admin.ApproveDeletion))
@@ -585,6 +599,10 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PUT("/admin/reviews/:id", authHandler("admin", reviewAdmin.Moderate))
 	api.DELETE("/admin/reviews/:id", authHandler("admin", technician.DeleteReview))
 	api.POST("/admin/sms", authHandler("admin", smsAdmin.Send))
+	api.GET("/admin/sms/balance", authHandler("admin", smsAdmin.Balance))
+	api.GET("/admin/sms/profile", authHandler("admin", smsAdmin.Profile))
+	api.GET("/admin/sms/contacts", authHandler("admin", smsAdmin.ContactGroups))
+	api.POST("/admin/sms/contacts/:group_id", authHandler("admin", smsAdmin.StoreContact))
 	api.POST("/admin/critical-alerts", authHandler("admin", criticalAlerts.Send))
 	api.GET("/admin/disputes", authHandler("admin", disputeHandler.AdminList))
 	api.PATCH("/admin/disputes/:id", authHandler("admin", disputeHandler.Resolve))
@@ -617,7 +635,7 @@ func authHandler(role string, handler http.HandlerFunc) gin.HandlerFunc {
 
 func socialUserHandler(handler http.HandlerFunc) gin.HandlerFunc {
 	return authHandlerByRole(map[string]http.HandlerFunc{
-		"customer": handler, "technician": handler, "isp": handler,
+		"customer": handler, "technician": handler, "isp": handler, "admin": handler,
 	})
 }
 
@@ -631,6 +649,29 @@ func authHandlerByRole(handlersByRole map[string]http.HandlerFunc) gin.HandlerFu
 		if handler := handlersByRole[role]; handler != nil {
 			handler(w, r)
 			return
+		}
+		if role == "admin" {
+			// Super administrators have access to all user endpoints.
+			// Respect ?as=role if provided; otherwise fall back to available handler.
+			asRole := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("as")))
+			if asRole != "" {
+				if handler := handlersByRole[asRole]; handler != nil {
+					handler(w, r)
+					return
+				}
+			}
+			for _, preferred := range []string{"customer", "isp", "technician"} {
+				if handler := handlersByRole[preferred]; handler != nil {
+					handler(w, r)
+					return
+				}
+			}
+			for _, handler := range handlersByRole {
+				if handler != nil {
+					handler(w, r)
+					return
+				}
+			}
 		}
 		http.Error(w, "forbidden", http.StatusForbidden)
 	})))

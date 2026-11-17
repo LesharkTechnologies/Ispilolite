@@ -39,6 +39,14 @@ func (r *CacheRepo) Set(key string, value interface{}, expiration time.Duration)
 	return r.client.Set(context.Background(), key, encoded, expiration).Err()
 }
 
+func (r *CacheRepo) SetIfAbsent(key string, value interface{}, expiration time.Duration) (bool, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return false, err
+	}
+	return r.client.SetNX(context.Background(), key, encoded, expiration).Result()
+}
+
 func (r *CacheRepo) Get(key string) (string, error) {
 	return r.client.Get(context.Background(), key).Result()
 }

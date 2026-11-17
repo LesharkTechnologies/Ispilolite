@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -86,13 +87,16 @@ func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 500, "failed to update profile")
 		return
 	}
+	recordAudit(r, "user.profile_update", "UPDATE", "user", u.ID, "User updated personal profile details", true, nil)
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: u})
 }
 func (h *ClientHandler) RequestDeleteProfile(w http.ResponseWriter, r *http.Request) {
-	if err := h.users.RequestDeleteUser(userIDFromContext(r.Context()), "deletion_requested"); err != nil {
+	uid := userIDFromContext(r.Context())
+	if err := h.users.RequestDeleteUser(uid, "deletion_requested"); err != nil {
 		respondWithError(w, 500, "failed to request deletion")
 		return
 	}
+	recordAudit(r, "user.delete_request", "REQUEST", "user", uid, "User requested account deletion under KDPA 2019", true, nil)
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "profile deletion requested"})
 }
 func (h *ClientHandler) GetInstallations(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +190,7 @@ func (h *ClientHandler) AssignJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 409, "job is no longer available")
 		return
 	}
+	recordAudit(r, "job.assign", "UPDATE", "job", id, "Client assigned job "+id+" to technician application "+req.ApplicationID, true, map[string]interface{}{"job_id": id, "application_id": req.ApplicationID})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: job})
 }
 func (h *ClientHandler) SetJobAvailability(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +204,7 @@ func (h *ClientHandler) SetJobAvailability(w http.ResponseWriter, r *http.Reques
 		respondWithError(w, 404, "job not found")
 		return
 	}
+	recordAudit(r, "job.availability", "UPDATE", "job", id, fmt.Sprintf("Client set job availability to %v", req.Available), true, map[string]interface{}{"job_id": id, "available": req.Available})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "job availability updated"})
 }
 func (h *ClientHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +213,7 @@ func (h *ClientHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 404, "job not found")
 		return
 	}
+	recordAudit(r, "job.delete", "DELETE", "job", id, "Client deleted job "+id, true, map[string]interface{}{"job_id": id})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "job deleted"})
 }
 
@@ -230,6 +237,7 @@ func (h *ClientHandler) TerminateJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 409, "job could not be terminated")
 		return
 	}
+	recordAudit(r, "job.terminate", "UPDATE", "job", id, "Job terminated: "+req.Reason, true, map[string]interface{}{"job_id": id, "reason": req.Reason})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "job terminated"})
 }
 func (h *ClientHandler) ReservePackage(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +251,7 @@ func (h *ClientHandler) ReservePackage(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 409, err.Error())
 		return
 	}
+	recordAudit(r, "package.reserve", "CREATE", "package_reservation", reservationID, "Client reserved ISP package "+req.PackageID, true, map[string]interface{}{"package_id": req.PackageID, "reservation_id": reservationID})
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Data: map[string]interface{}{"reservation_id": reservationID, "expires_in": 900}})
 }
 func (h *ClientHandler) SubscribePackage(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +265,7 @@ func (h *ClientHandler) SubscribePackage(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, 409, "reservation is unavailable or expired")
 		return
 	}
+	recordAudit(r, "package.subscribe", "CREATE", "package_subscription", subscription.ID, "Client subscribed to ISP package from reservation "+reservationID, true, map[string]interface{}{"subscription_id": subscription.ID})
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Data: subscription})
 }
 func (h *ClientHandler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {

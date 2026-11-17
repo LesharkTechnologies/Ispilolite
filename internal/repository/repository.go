@@ -176,6 +176,7 @@ type CacheRepository interface {
 	GetOTP(userID string) (string, error)
 	DeleteOTP(userID string) error
 	Set(key string, value interface{}, expiration time.Duration) error
+	SetIfAbsent(key string, value interface{}, expiration time.Duration) (bool, error)
 	Get(key string) (string, error)
 	SetRevokedToken(token string, expiration time.Duration) error
 	IsTokenRevoked(token string) bool

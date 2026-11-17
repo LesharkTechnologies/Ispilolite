@@ -1,5 +1,6 @@
 {
     "claudeCode.enableNewConversationShortcut": true,
     "claudeCode.disableLoginPrompt": true,
-    "claudeCode.useCtrlEnterToSend": false
+    "claudeCode.useCtrlEnterToSend": false,
+    "python.terminal.useEnvFile": true
 }

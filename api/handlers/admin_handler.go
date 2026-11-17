@@ -2,7 +2,8 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
+	"fmt"
+	"html/template"
 	"net/http"
 	"os"
 	"strconv"
@@ -74,6 +75,7 @@ func (h *AdminHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		respondWithInternalError(w, err)
 		return
 	}
+	recordAudit(r, "admin.user_create", "CREATE", "user", user.ID, "Admin created "+user.Role+" user account for "+user.Username, true, map[string]interface{}{"username": user.Username, "role": user.Role})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: user})
 }
 
@@ -149,6 +151,7 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			_, _ = h.db.ExecContext(r.Context(), `UPDATE auth_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id)
 		}
 	}
+	recordAudit(r, "admin.user_update", "UPDATE", "user", id, "Admin updated user status="+input.Status, true, map[string]interface{}{"user_id": id, "status": input.Status})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "user updated"})
 }
 
@@ -189,6 +192,7 @@ func (h *AdminHandler) RetrySettlement(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 404, "failed settlement item not found")
 		return
 	}
+	recordAudit(r, "admin.settlement_retry", "UPDATE", "payment_settlement", id, "Admin queued failed settlement for retry", true, map[string]interface{}{"settlement_id": id})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "settlement queued for retry"})
 }
 
@@ -253,6 +257,7 @@ func (h *AdminHandler) ApproveDeletion(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.db.ExecContext(r.Context(), `UPDATE technician_profiles SET is_available=false WHERE technician_id=$1`, userID)
 	_, _ = h.db.ExecContext(r.Context(), `UPDATE isps SET is_active=false WHERE id=$1`, userID)
 
+	recordAudit(r, "admin.user_delete", "DELETE", "user", userID, "Admin approved account soft-deletion for user "+userID, true, map[string]interface{}{"user_id": userID})
 	respondWithJSON(w, 200, dto.APIResponse{
 		Success: true,
 		Message: "account soft-deleted; consumer access revoked and data retained for 2 years per KDPA 2019",
@@ -442,6 +447,7 @@ func (h *AdminHandler) ModeratePackage(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 404, "package not found")
 		return
 	}
+	recordAudit(r, "admin.package_moderate", "UPDATE", "isp_package", id, fmt.Sprintf("Admin moderated package %s status=%s", id, strings.ToLower(req.Status)), true, map[string]interface{}{"package_id": id, "status": req.Status, "note": req.Note})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "package moderated"})
 }
 func (h *AdminHandler) AuditExport(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +466,7 @@ func (h *AdminHandler) AuditExport(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, err.Error())
 		return
 	}
+	recordAudit(r, "admin.audit_export", "EXPORT", "audit_archive", path, fmt.Sprintf("Admin exported audit archive (%d records)", count), true, map[string]interface{}{"path": path, "events": count})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]interface{}{"path": path, "events": count}})
 }
 func (h *AdminHandler) AuditDelete(w http.ResponseWriter, r *http.Request) {
@@ -478,32 +485,389 @@ func (h *AdminHandler) AuditDelete(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 409, err.Error())
 		return
 	}
+	recordAudit(r, "admin.audit_delete", "DELETE", "audit_events", "", fmt.Sprintf("Admin purged %d archived audit records", count), true, map[string]interface{}{"deleted": count})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: map[string]int64{"deleted": count}})
 }
 func (h *AdminHandler) AuditList(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 500 {
-		limit = 100
+		limit = 50
 	}
-	rows, err := h.db.QueryContext(r.Context(), `SELECT id,COALESCE(actor_id::text,''),actor_role,event,action,resource_type,resource_id,description,success,metadata,occurred_at FROM audit_events WHERE ($1='' OR event=$1) ORDER BY occurred_at DESC LIMIT $2`, r.URL.Query().Get("event"), limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	event := strings.TrimSpace(r.URL.Query().Get("event"))
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	if role == "" {
+		role = strings.TrimSpace(r.URL.Query().Get("category"))
+	}
+	actorID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if actorID == "" {
+		actorID = strings.TrimSpace(r.URL.Query().Get("actor_id"))
+	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip == "" {
+		ip = strings.TrimSpace(r.URL.Query().Get("ip_address"))
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	var startTime, endTime *time.Time
+	if s := strings.TrimSpace(r.URL.Query().Get("start")); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			startTime = &t
+		}
+	}
+	if e := strings.TrimSpace(r.URL.Query().Get("end")); e != "" {
+		if t, err := time.Parse(time.RFC3339, e); err == nil {
+			endTime = &t
+		}
+	}
+
+	filter := audit.ListFilter{
+		Event:     event,
+		ActorRole: role,
+		ActorID:   actorID,
+		IPAddress: ip,
+		Status:    status,
+		Search:    q,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Limit:     limit,
+		Offset:    offset,
+	}
+
+	items, total, err := h.audit.List(r.Context(), filter)
 	if err != nil {
 		respondWithError(w, 500, "failed to list audit events")
 		return
 	}
-	defer rows.Close()
-	items := []map[string]interface{}{}
-	for rows.Next() {
-		var id, actor, role, event, action, resourceType, resourceID, description string
-		var success bool
-		var metadata []byte
-		var at time.Time
-		if err := rows.Scan(&id, &actor, &role, &event, &action, &resourceType, &resourceID, &description, &success, &metadata, &at); err != nil {
-			respondWithError(w, 500, "failed to read audit events")
-			return
-		}
-		var data map[string]interface{}
-		_ = json.Unmarshal(metadata, &data)
-		items = append(items, map[string]interface{}{"id": id, "actor_id": actor, "actor_role": role, "event": event, "action": action, "resource_type": resourceType, "resource_id": resourceID, "description": description, "success": success, "metadata": data, "occurred_at": at})
+
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	accept := r.Header.Get("Accept")
+	if format == "html" || (strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/json")) {
+		h.renderAuditHTML(w, r, items, total, filter)
+		return
 	}
-	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: items})
+
+	respondWithJSON(w, 200, dto.APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"items":      items,
+			"total":      total,
+			"limit":      limit,
+			"offset":     offset,
+			"categories": []string{"admin", "client", "isp", "technicians"},
+		},
+	})
+}
+
+func (h *AdminHandler) DatabaseOverview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stats := make(map[string]interface{})
+
+	var totalUsers, activeUsers, clientCount, ispCount, techCount, adminCount int
+	_ = h.db.QueryRowContext(ctx, `SELECT 
+		count(*),
+		count(*) FILTER (WHERE status='active'),
+		count(*) FILTER (WHERE role='customer' OR role='client'),
+		count(*) FILTER (WHERE role='isp'),
+		count(*) FILTER (WHERE role='technician'),
+		count(*) FILTER (WHERE role='admin')
+	FROM users`).Scan(&totalUsers, &activeUsers, &clientCount, &ispCount, &techCount, &adminCount)
+
+	stats["users"] = map[string]interface{}{
+		"total":       totalUsers,
+		"active":      activeUsers,
+		"clients":     clientCount,
+		"isps":        ispCount,
+		"technicians": techCount,
+		"admins":      adminCount,
+	}
+
+	var auditCount int
+	_ = h.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events`).Scan(&auditCount)
+	stats["audit_events_total"] = auditCount
+
+	var totalJobs, pendingJobs, inProgressJobs, completedJobs int
+	_ = h.db.QueryRowContext(ctx, `SELECT 
+		count(*),
+		count(*) FILTER (WHERE status='pending'),
+		count(*) FILTER (WHERE status='in_progress' OR status='assigned'),
+		count(*) FILTER (WHERE status='completed')
+	FROM job_requests`).Scan(&totalJobs, &pendingJobs, &inProgressJobs, &completedJobs)
+
+	stats["jobs"] = map[string]interface{}{
+		"total":       totalJobs,
+		"pending":     pendingJobs,
+		"in_progress": inProgressJobs,
+		"completed":   completedJobs,
+	}
+
+	var totalPackages, activePackages, pendingModeration int
+	_ = h.db.QueryRowContext(ctx, `SELECT 
+		count(*),
+		count(*) FILTER (WHERE is_active=true),
+		count(*) FILTER (WHERE moderation_status='pending')
+	FROM isp_packages`).Scan(&totalPackages, &activePackages, &pendingModeration)
+
+	stats["packages"] = map[string]interface{}{
+		"total":              totalPackages,
+		"active":             activePackages,
+		"pending_moderation": pendingModeration,
+	}
+
+	var totalDisputes, openDisputes, resolvedDisputes int
+	_ = h.db.QueryRowContext(ctx, `SELECT 
+		count(*),
+		count(*) FILTER (WHERE status='open' OR status='pending'),
+		count(*) FILTER (WHERE status='resolved')
+	FROM disputes`).Scan(&totalDisputes, &openDisputes, &resolvedDisputes)
+
+	stats["disputes"] = map[string]interface{}{
+		"total":    totalDisputes,
+		"open":     openDisputes,
+		"resolved": resolvedDisputes,
+	}
+
+	var dbSize string
+	_ = h.db.QueryRowContext(ctx, `SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
+	stats["database_size"] = dbSize
+
+	recordAudit(r, "admin.database_view", "GET", "system", "", "Admin viewed system database overview", true, nil)
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: stats})
+}
+
+func (h *AdminHandler) renderAuditHTML(w http.ResponseWriter, r *http.Request, items []audit.EventView, total int, filter audit.ListFilter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	htmlTmpl := `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ispilolite System Audit Logs — Audit Officer Portal</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card-bg: #1e293b;
+    --border: #334155;
+    --text: #f8fafc;
+    --text-muted: #94a3b8;
+    --primary: #3b82f6;
+    --primary-hover: #2563eb;
+    --success: #10b981;
+    --danger: #ef4444;
+    --admin: #ef4444;
+    --client: #10b981;
+    --isp: #8b5cf6;
+    --tech: #06b6d4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background: var(--bg); color: var(--text); padding: 24px; line-height: 1.5; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .title { font-size: 1.5rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+  .badge-role { display: inline-block; padding: 3px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .role-admin { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+  .role-client { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+  .role-isp { background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); }
+  .role-technicians { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.4); }
+  .role-anon { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+  .badge-status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+  .status-success { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+  .status-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+  .badge-ip { font-family: monospace; font-size: 0.8rem; background: #0f172a; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); color: #cbd5e1; }
+  .filter-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 20px; }
+  .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .filter-input { width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 0.875rem; }
+  .filter-input:focus { outline: none; border-color: var(--primary); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; text-decoration: none; border: none; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-secondary { background: var(--border); color: var(--text); }
+  .btn-secondary:hover { background: #475569; }
+  .stats-bar { display: flex; gap: 16px; margin-bottom: 16px; font-size: 0.875rem; color: var(--text-muted); align-items: center; }
+  .stats-badge { background: #0f172a; border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; color: #fff; font-weight: 600; }
+  .table-container { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem; }
+  th { background: #0f172a; padding: 12px 14px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: rgba(255, 255, 255, 0.02); }
+  .user-cell { display: flex; flex-direction: column; gap: 2px; }
+  .user-name { font-weight: 600; color: #fff; }
+  .user-sub { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
+  .desc-cell { max-width: 380px; word-break: break-word; color: #e2e8f0; }
+  .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="title">🛡️ Ispilolite Audit Officer Portal</div>
+      <div style="font-size:0.875rem; color:var(--text-muted); margin-top:4px;">
+        Comprehensive system activity monitoring: user ID, category (admin, client, isp, technician), event, status, timestamp, IP address & action.
+      </div>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <a href="/api/v1/admin/audit?format=json" class="btn btn-secondary">Raw JSON</a>
+      <a href="/api/v1/admin/database/overview" class="btn btn-secondary">Database Overview</a>
+    </div>
+  </div>
+
+  <div class="filter-card">
+    <form method="GET" action="/api/v1/admin/audit">
+      <input type="hidden" name="format" value="html">
+      <div class="filter-grid">
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Search Activity / Actor</label>
+          <input type="text" name="q" value="{{.Filter.Search}}" placeholder="e.g. login, payment, admin, IP" class="filter-input">
+        </div>
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">User Category</label>
+          <select name="category" class="filter-input">
+            <option value="" {{if eq .Filter.ActorRole ""}}selected{{end}}>All Categories</option>
+            <option value="admin" {{if eq .Filter.ActorRole "admin"}}selected{{end}}>Admin</option>
+            <option value="client" {{if or (eq .Filter.ActorRole "client") (eq .Filter.ActorRole "customer")}}selected{{end}}>Client (Customer)</option>
+            <option value="isp" {{if eq .Filter.ActorRole "isp"}}selected{{end}}>ISP</option>
+            <option value="technicians" {{if or (eq .Filter.ActorRole "technician") (eq .Filter.ActorRole "technicians")}}selected{{end}}>Technicians</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Status</label>
+          <select name="status" class="filter-input">
+            <option value="" {{if eq .Filter.Status ""}}selected{{end}}>All Statuses</option>
+            <option value="success" {{if eq .Filter.Status "success"}}selected{{end}}>SUCCESS</option>
+            <option value="failed" {{if eq .Filter.Status "failed"}}selected{{end}}>FAILED</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Event Name</label>
+          <input type="text" name="event" value="{{.Filter.Event}}" placeholder="e.g. user.login" class="filter-input">
+        </div>
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">IP Address</label>
+          <input type="text" name="ip" value="{{.Filter.IPAddress}}" placeholder="e.g. 197.232.45.10" class="filter-input">
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; gap:8px;">
+          <button type="submit" class="btn btn-primary">Apply Filters</button>
+          <a href="/api/v1/admin/audit?format=html" class="btn btn-secondary">Reset</a>
+        </div>
+        <div style="font-size:0.875rem; color:var(--text-muted);">
+          Total Logged Activities: <span class="stats-badge">{{.Total}}</span>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Time (UTC)</th>
+          <th>User Category</th>
+          <th>Who Did This</th>
+          <th>IP Address</th>
+          <th>Event</th>
+          <th>Action</th>
+          <th>Status</th>
+          <th>Description of Event</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if eq (len .Items) 0}}
+        <tr>
+          <td colspan="8" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No audit records match the current filter criteria.
+          </td>
+        </tr>
+        {{end}}
+        {{range .Items}}
+        <tr>
+          <td style="white-space:nowrap; font-family:monospace; font-size:0.8rem; color:var(--text-muted);">
+            {{.Time}}
+          </td>
+          <td>
+            {{if eq .UserCategory "admin"}}
+              <span class="badge-role role-admin">Admin</span>
+            {{else if eq .UserCategory "client"}}
+              <span class="badge-role role-client">Client</span>
+            {{else if eq .UserCategory "isp"}}
+              <span class="badge-role role-isp">ISP</span>
+            {{else if eq .UserCategory "technicians"}}
+              <span class="badge-role role-technicians">Technician</span>
+            {{else}}
+              <span class="badge-role role-anon">{{.UserCategory}}</span>
+            {{end}}
+          </td>
+          <td>
+            <div class="user-cell">
+              {{if .ActorUsername}}
+                <span class="user-name">@{{.ActorUsername}}</span>
+                {{if .ActorName}}<span style="font-size:0.8rem; color:#cbd5e1;">{{.ActorName}}</span>{{end}}
+              {{else if .ActorName}}
+                <span class="user-name">{{.ActorName}}</span>
+              {{else if .ActorID}}
+                <span class="user-name">User</span>
+              {{else}}
+                <span class="user-name" style="color:var(--text-muted);">Anonymous / System</span>
+              {{end}}
+              {{if .ActorID}}
+                <span class="user-sub" title="Actor ID">{{.ActorID}}</span>
+              {{end}}
+            </div>
+          </td>
+          <td>
+            {{if .IPAddress}}
+              <span class="badge-ip">{{.IPAddress}}</span>
+            {{else}}
+              <span style="color:var(--text-muted); font-size:0.8rem;">-</span>
+            {{end}}
+          </td>
+          <td style="font-weight:600; color:#fff;">
+            {{.Event}}
+          </td>
+          <td>
+            <span style="font-size:0.75rem; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-weight:600;">
+              {{.Action}}
+            </span>
+          </td>
+          <td>
+            {{if .Success}}
+              <span class="badge-status status-success">SUCCESS</span>
+            {{else}}
+              <span class="badge-status status-failed">FAILED</span>
+            {{end}}
+          </td>
+          <td class="desc-cell">
+            {{.Description}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>`
+
+	tmpl, err := template.New("audit_dashboard").Parse(htmlTmpl)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+
+	data := struct {
+		Items  []audit.EventView
+		Total  int
+		Filter audit.ListFilter
+	}{
+		Items:  items,
+		Total:  total,
+		Filter: filter,
+	}
+
+	_ = tmpl.Execute(w, data)
 }

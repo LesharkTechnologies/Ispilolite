@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"ispilolite/api/dto"
 	"ispilolite/internal/middleware"
@@ -15,7 +20,13 @@ type speedTestReader interface {
 	ISPOptions(string, string) ([]*models.SpeedTestISPOption, error)
 	Create(*models.SpeedTest, string) error
 	ListMine(string, int) ([]*models.SpeedTest, error)
+	GetByID(context.Context, string, string) (*models.SpeedTest, error)
+	Delete(context.Context, string, string) error
 	Stats(string, string, string) (*models.SpeedTestStats, error)
+	GetCountyMonthlyStats(context.Context, string, string, int, int) (*models.CountyMonthlySpeedStats, error)
+	ListCountyBenchmarks(context.Context, int, int) ([]*models.CountySpeedBenchmark, error)
+	ListTownStats(context.Context, string, int, int) ([]*models.CountyMonthlySpeedStats, error)
+	AggregateMonthlySpeedStats(context.Context, int, int) error
 }
 
 type speedTestAdminReader interface {
@@ -141,6 +152,122 @@ func (h *SpeedTestHandler) AdminModerate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]string{"status": status}})
+}
+
+func (h *SpeedTestHandler) CountyStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	county := strings.TrimSpace(q.Get("county"))
+	town := strings.TrimSpace(q.Get("town"))
+	year, _ := strconv.Atoi(q.Get("year"))
+	month, _ := strconv.Atoi(q.Get("month"))
+
+	stats, err := h.repo.GetCountyMonthlyStats(r.Context(), county, town, year, month)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+
+	data := map[string]any{"stats": stats}
+	if q.Get("include_towns") == "true" && county != "" {
+		if towns, err := h.repo.ListTownStats(r.Context(), county, year, month); err == nil {
+			data["towns"] = towns
+		}
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: data})
+}
+
+func (h *SpeedTestHandler) CountyBenchmarks(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	year, _ := strconv.Atoi(q.Get("year"))
+	month, _ := strconv.Atoi(q.Get("month"))
+
+	benchmarks, err := h.repo.ListCountyBenchmarks(r.Context(), year, month)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"benchmarks": benchmarks, "count": len(benchmarks)}})
+}
+
+func (h *SpeedTestHandler) TownStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	county := strings.TrimSpace(q.Get("county"))
+	if county == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "county is required")
+		return
+	}
+	year, _ := strconv.Atoi(q.Get("year"))
+	month, _ := strconv.Atoi(q.Get("month"))
+
+	towns, err := h.repo.ListTownStats(r.Context(), county, year, month)
+	if err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"towns": towns, "count": len(towns)}})
+}
+
+func (h *SpeedTestHandler) GetSpeedTest(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/my/speed-tests/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/speed-tests/")
+	}
+	if id == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "speed test id is required")
+		return
+	}
+	userID := userIDFromContext(r.Context())
+	item, err := h.repo.GetByID(r.Context(), id, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "speed test not found")
+			return
+		}
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: item})
+}
+
+func (h *SpeedTestHandler) DeleteSpeedTest(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r.URL.Path, "/api/v1/my/speed-tests/")
+	if id == "" {
+		id = pathParam(r.URL.Path, "/api/v1/speed-tests/")
+	}
+	if id == "" {
+		respondWithErrorRaw(w, http.StatusBadRequest, "speed test id is required")
+		return
+	}
+	userID := userIDFromContext(r.Context())
+	if err := h.repo.Delete(r.Context(), id, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "speed test not found")
+			return
+		}
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "speed test deleted"})
+}
+
+func (h *SpeedTestHandler) AdminAggregate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Year  int `json:"year"`
+		Month int `json:"month"`
+	}
+	_ = decodeJSON(w, r, &body)
+	now := time.Now().UTC()
+	if body.Year <= 0 {
+		body.Year = now.Year()
+	}
+	if body.Month <= 0 || body.Month > 12 {
+		body.Month = int(now.Month())
+	}
+	if err := h.repo.AggregateMonthlySpeedStats(r.Context(), body.Year, body.Month); err != nil {
+		respondWithInternalError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: fmt.Sprintf("monthly speed statistics aggregated for %s %d", time.Month(body.Month).String(), body.Year)})
 }
 
 func validateSpeedTest(item *models.SpeedTest) error {

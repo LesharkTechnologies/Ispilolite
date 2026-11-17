@@ -86,7 +86,8 @@ func AuthMiddleware(requiredRole string) func(http.Handler) http.Handler {
 			}
 
 			// If a specific role is required, check for it.
-			if requiredRole != "" && claims.Role != requiredRole {
+			// System administrators with role "admin" have super-access to all user endpoints.
+			if requiredRole != "" && claims.Role != requiredRole && claims.Role != "admin" {
 				http.Error(w, "Forbidden: insufficient permissions", http.StatusForbidden)
 				return
 			}

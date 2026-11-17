@@ -31,19 +31,19 @@ type BillingSystem struct {
 }
 
 type BillingPrice struct {
-	ID                    string     `json:"id"`
-	BillingSystemID       string     `json:"billing_system_id"`
-	ServiceType           string     `json:"service_type"`
-	Currency              string     `json:"currency"`
-	BillingPeriod         string     `json:"billing_period"`
-	Amount                *float64   `json:"amount,omitempty"`
-	SetupFee              float64    `json:"setup_fee"`
-	SubscriberLimit       *int       `json:"subscriber_limit,omitempty"`
-	ExtraSubscriberCost   *float64   `json:"extra_subscriber_cost,omitempty"`
-	TransactionFeePercent *float64   `json:"transaction_fee_percent,omitempty"`
-	Notes                 string     `json:"notes"`
-	Available             bool       `json:"available"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	ID                    string    `json:"id"`
+	BillingSystemID       string    `json:"billing_system_id"`
+	ServiceType           string    `json:"service_type"`
+	Currency              string    `json:"currency"`
+	BillingPeriod         string    `json:"billing_period"`
+	Amount                *float64  `json:"amount,omitempty"`
+	SetupFee              float64   `json:"setup_fee"`
+	SubscriberLimit       *int      `json:"subscriber_limit,omitempty"`
+	ExtraSubscriberCost   *float64  `json:"extra_subscriber_cost,omitempty"`
+	TransactionFeePercent *float64  `json:"transaction_fee_percent,omitempty"`
+	Notes                 string    `json:"notes"`
+	Available             bool      `json:"available"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type BillingReview struct {

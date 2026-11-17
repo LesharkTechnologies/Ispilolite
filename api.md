@@ -105,7 +105,7 @@ moves it to `scheduled`.
 ### Serviceability
 
 ```http
-GET    /serviceability?county=Nairobi&town=Westlands&estate=...
+GET    /serviceability?county=Machakos&town=Machakos%20Town&estate=...
 POST   /serviceability/waitlist
 GET    /my/serviceability
 POST   /my/serviceability
@@ -113,10 +113,14 @@ DELETE /my/serviceability/:id
 GET    /my/serviceability/waitlist
 ```
 
-ISPs maintain manual serviceability records with `serviceable`,
-`likely_serviceable`, `survey_required`, or `not_serviceable` status, technology,
-estimated installation days, and a reason. Customers can check an area before
-creating a request and join a waitlist when service is unavailable.
+The serviceability engine seamlessly unifies explicit ISP building/estate overrides with active network coverage locations (`/my/coverage`) and registered ISP counties. ISPs no longer need to duplicate data between coverage locations and serviceability records.
+
+When customers check serviceability (`GET /serviceability`), the response returns:
+- `items`: All serviceable and likely-serviceable ISPs in that area with estimated connection days and supported technologies.
+- `speed_recommendation`: Crowdsourced monthly internet speed analytics for that county and town (e.g. minimum, maximum, and average download/upload speeds, latency, and human-friendly recommendations such as *"Machakos Town internet speeds range from 5.0 Mbps to 50.0 Mbps, averaging 30.0 Mbps based on 28 customer test(s) in November 2026"*).
+- `count`: Total serviceable providers found.
+
+Customers can join a waitlist (`POST /serviceability/waitlist`) when coverage has not yet reached their specific estate or building.
 
 ### Installation proof
 
@@ -388,11 +392,17 @@ registered ISP.
 | ISP suggestions | `GET /api/v1/speed-tests/isps?county=Machakos&town=Machakos%20Town` | Public |
 | Save result | `POST /api/v1/speed-tests` | Optional login |
 | My history | `GET /api/v1/my/speed-tests?limit=50` | Authenticated user |
+| View single test | `GET /api/v1/my/speed-tests/{id}` | Authenticated user |
+| Delete single test | `DELETE /api/v1/my/speed-tests/{id}` | Authenticated user |
 | ISP dashboard stats | `GET /api/v1/my/speed-tests/stats?county=&town=` | ISP only |
+| Regional analytics & recommendations | `GET /api/v1/geo/speed-stats?county=Machakos&town=Machakos%20Town&year=2026&month=11` | Public |
+| Town-by-town speed breakdown | `GET /api/v1/geo/speed-stats/towns?county=Machakos` | Public |
+| County benchmarks (all Kenya) | `GET /api/v1/geo/county-speed-benchmarks?year=2026&month=11` | Public |
 | Moderation queue | `GET /api/v1/admin/speed-tests?status=pending` | Admin only |
 | Moderate result | `PATCH /api/v1/admin/speed-tests/{id}` | Admin only |
+| Aggregate monthly statistics | `POST /api/v1/admin/speed-tests/aggregate` | Admin only |
 
-Results are private to the submitting user by default. New submissions start
+Results are private to the submitting user by default, stored individually with the exact test execution timestamp and user ID. New submissions start
 as `pending`; only moderated `accepted` tests should be used for official public
 statistics. `include_in_public_stats` defaults to `false`, so a user can save a
 private result without affecting public rankings.
@@ -403,6 +413,38 @@ for abuse investigation and moderation; it is never returned in user history,
 ISP dashboard results, public statistics, or rankings. ISP dashboards receive
 aggregate counts and accepted-test averages for tests attributed to their
 registered ISP, without customer identity or IP addresses.
+
+### Regional Speed Benchmarks & Customer Recommendations
+The platform aggregates speed tests monthly across counties and towns to power customer ISP recommendations.
+For example, a check in Machakos Town returns:
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "county": "Machakos",
+      "town": "Machakos Town",
+      "year": 2026,
+      "month": 11,
+      "sample_count": 42,
+      "min_download_mbps": 5.0,
+      "max_download_mbps": 50.0,
+      "avg_download_mbps": 30.0,
+      "avg_upload_mbps": 14.5,
+      "avg_latency_ms": 18.2,
+      "recommendation_summary": "Machakos Town, Machakos internet speeds range from 5.0 Mbps to 50.0 Mbps, averaging 30.0 Mbps based on 42 customer speed test(s) in November 2026."
+    }
+  }
+}
+```
+
+County benchmarks compare overall county performance across Kenya:
+- Mombasa: avg 80 Mbps
+- Kisumu: avg 56 Mbps
+- Nairobi: avg 50 Mbps
+- Machakos: avg 30 Mbps
+
+Migrations `0041_speed_test_history.sql` and `0042_monthly_regional_speed_stats.sql` must be applied before deploying the speed-test and regional analytics APIs.
 
 Example submission:
 
@@ -593,13 +635,40 @@ Alternatively, sending `DELETE /admin/users/{user_id}` or `DELETE /admin/deletio
 - User skills, names, phones, emails, and transaction histories are preserved in the DB for statutory audit, completely invisible on consumer endpoints.
 - After the 2-year window, `POST /admin/retention/purge-expired` or `DELETE /admin/retention/expired` executes the final automated scrubbing of expired PII.
 
-## Audit logs
+## Audit logs and Audit Officer Portal
 
 ```http
 GET /admin/audit?event=user.login&limit=100
+GET /admin/audit?category=client&status=success
+GET /admin/audit?format=html
+GET /admin/database/overview
 ```
 
-Audit records include event, action, actor, resource, description, success/failure, request ID, IP, user agent, metadata, and timestamp.
+Audit records capture all main system activities including:
+- **IP Address**: Source client IP (`ip_address`)
+- **User ID**: Identified actor (`user_id` / `actor_id`)
+- **Actor Identity**: Who did this (`actor_name`, `actor_username`, `actor_email`, `actor_phone`)
+- **User Category**: Role classification (`user_category`: `admin`, `client`, `isp`, `technicians`)
+- **Event**: Specific activity (`event`, e.g. `user.login`, `job.create`, `payment.initiate`, `installation.requested`, `dispute.create`)
+- **Action**: High-level verb (`action`: `CREATE`, `UPDATE`, `DELETE`, `GET`, `LOGIN`, `REGISTER`, `REQUEST`, `EXPORT`, `SYSTEM`)
+- **Status**: Execution outcome (`status`: `SUCCESS` or `FAILED`, boolean `success`)
+- **Timestamp**: Time of occurrence (`time` and `occurred_at`)
+- **Description**: Detailed human-readable description of what transpired
+
+Supported query parameters on `/admin/audit`:
+- `category` or `role`: `admin`, `client` (customer), `isp`, `technicians`
+- `status`: `success` or `failed`
+- `event`: filter by event name (substring match)
+- `user_id`: filter by actor UUID
+- `ip`: filter by IP address
+- `q`: full-text search across descriptions, actor names, usernames, and IP addresses
+- `start` / `end`: RFC3339 timestamps for time range
+- `limit` (default 50) and `offset`
+- `format=html`: renders the responsive Audit Officer Portal HTML Dashboard for direct browser inspection
+
+Super Administrator Credentials (.env):
+Administrators can log in via `/api/v1/auth/login` using `ADMIN_USERNAME` and `ADMIN_PASSWORD` defined in `.env`.
+The admin user is automatically provisioned and synchronized with full super-privileges to access all system data, database overviews (`/admin/database/overview`), and any customer/ISP/technician endpoints.
 
 Export:
 
@@ -620,9 +689,18 @@ The backend refuses deletion when no completed archive covers the entire range.
 ## Admin SMS and critical alerts
 
 ```http
-POST /admin/sms
-POST /admin/critical-alerts
+POST   /admin/sms
+GET    /admin/sms/balance
+GET    /admin/sms/profile
+GET    /admin/sms/contacts
+POST   /admin/sms/contacts/:group_id
+POST   /admin/critical-alerts
 ```
+
+`GET /admin/sms/balance` queries the TalkSasa API and returns current remaining SMS balance (e.g. `{"remaining_balance": "Ksh67"}`).
+`GET /admin/sms/profile` queries the TalkSasa account profile (`/me`).
+`GET /admin/sms/contacts` lists TalkSasa contact groups.
+`POST /admin/sms/contacts/:group_id` stores a contact into a TalkSasa group (`{"phone": "2547...", "first_name": "...", "last_name": "..."}`).
 
 Admin SMS payload:
 
@@ -1156,6 +1234,15 @@ Customer login is phone-only and OTP-based:
 
 The response sends an OTP. Submit that OTP to `/auth/verify-otp`; successful verification returns the JWT pair.
 
+The OTP in the SMS is the same server-generated code stored in Redis for that
+user. A new code replaces the previous code only after the resend cooldown.
+OTP requests are protected by a 30-second per-phone cooldown, a maximum of 3
+requests per phone in 15 minutes, and a maximum of 10 requests per source IP
+in 15 minutes. Verification guesses are limited to 5 attempts per active code.
+The server returns `429 Too Many Requests` with `Retry-After` when these limits
+are reached. Clients should disable the resend button during the cooldown and
+must not generate or compare OTP values locally.
+
 ISP, technician, and admin login is username/password-only:
 
 ```json
@@ -1289,7 +1376,10 @@ X-Request-ID: <request-id>
 Include this ID in bug reports and support requests. API traffic is rate-limited per client/IP through Redis fixed-window limiters:
 - **Auth endpoints (`/api/v1/auth/*`)**: 5 requests per minute.
 - **Standard API endpoints (`/api/v1/*`)**: 300 requests per minute.
-- **Per-phone OTP attempts**: Max 3 requests per 15-minute window (`otp_attempts:<phone>`).
+- **OTP resend cooldown**: 30 seconds per phone.
+- **Per-phone OTP requests**: Max 3 requests per 15-minute window.
+- **Per-source-IP OTP requests**: Max 10 requests per 15-minute window.
+- **OTP verification guesses**: Max 5 attempts per active code.
 
 When rate limits are exceeded, the API responds with `429 Too Many Requests` and a `Retry-After: <seconds>` header.
 

@@ -24,7 +24,6 @@ func TestTalksasaSenderSendsDocumentedPayload(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{}}`))
 	}))
 	defer server.Close()
-
 	sender, err := NewTalksasaSender(server.URL+"/api/v3", "token", "TALKSASA", server.Client())
 	if err != nil {
 		t.Fatal(err)

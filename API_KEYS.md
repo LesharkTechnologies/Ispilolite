@@ -177,7 +177,7 @@ Local placeholders in `config/config.local.yaml`:
 | Variable | Purpose | Default | Required | Client-safe |
 |---|---|---|---|---|
 | `TALKSASA_API_TOKEN` | SMS gateway bearer token | — | yes for SMS | ❌ |
-| `TALKSASA_SENDER_ID` | Sender ID (e.g. `TALKSASA`) | — | yes for SMS | ❌ |
+| `TALKSASA_SENDER_ID` | Sender ID (e.g. `TALK-SASA`) | — | yes for SMS | ❌ |
 | `TALKSASA_BASE_URL` | Gateway base | `https://bulksms.talksasa.com/api/v3` | no | ❌ |
 
 ### 2.7 Message queue — RabbitMQ
@@ -244,7 +244,7 @@ ES_ENSURE_INDICES=true
 # --- SMS ---
 TALKSASA_BASE_URL=https://bulksms.talksasa.com/api/v3
 TALKSASA_API_TOKEN=replace-with-a-rotated-token
-TALKSASA_SENDER_ID=TALKSASA
+TALKSASA_SENDER_ID=TALK-SASA
 
 # --- Queue ---
 RABBITMQ_URL=amqp://ispilo:pass@rabbitmq-host:5672/

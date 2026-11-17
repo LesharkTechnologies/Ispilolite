@@ -6,9 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/google/uuid"
 	"ispilolite/internal/models"
 	"ispilolite/pkg/database"
+
+	"github.com/google/uuid"
 )
 
 type InstallationOperationsRepository struct {
@@ -29,15 +30,71 @@ func NewInstallationOperationsRepository() (*InstallationOperationsRepository, e
 }
 
 func (r *InstallationOperationsRepository) CheckServiceability(locationID, county, town, estate, building string) ([]*models.ServiceabilityRecord, error) {
-	rows, err := r.reader.Query(`SELECT s.id,s.isp_id,COALESCE(u.name,''),COALESCE(s.location_id::text,''),s.county,s.town,s.estate,s.building,s.technology,s.status,s.estimated_days,s.reason,s.active,s.created_at,s.updated_at
-		FROM isp_serviceability s JOIN users u ON u.id=s.isp_id
-		WHERE s.active=true AND u.status='active'
-		AND (NULLIF($1,'') IS NULL OR s.location_id=NULLIF($1,'')::uuid)
-		AND ($2='' OR lower(s.county)=lower($2))
-		AND ($3='' OR lower(s.town)=lower($3))
-		AND ($4='' OR lower(s.estate)=lower($4))
-		AND ($5='' OR lower(s.building)=lower($5))
-		ORDER BY CASE s.status WHEN 'serviceable' THEN 0 WHEN 'likely_serviceable' THEN 1 WHEN 'survey_required' THEN 2 ELSE 3 END,s.estimated_days,s.updated_at DESC`, locationID, county, town, estate, building)
+	rows, err := r.reader.Query(`
+		WITH explicit_serv AS (
+			SELECT s.id::text AS id, s.isp_id, COALESCE(u.name,'') AS isp_name, COALESCE(s.location_id::text,'') AS location_id,
+			       s.county, s.town, s.estate, s.building, s.technology, s.status, s.estimated_days,
+			       COALESCE(s.reason,'') AS reason, s.active, s.created_at, s.updated_at, 1 AS priority
+			FROM isp_serviceability s
+			JOIN users u ON u.id = s.isp_id
+			WHERE s.active = true AND u.status = 'active'
+			  AND (NULLIF($1,'') IS NULL OR s.location_id = NULLIF($1,'')::uuid)
+			  AND ($2 = '' OR lower(s.county) = lower($2))
+			  AND ($3 = '' OR lower(s.town) = lower($3))
+			  AND ($4 = '' OR lower(s.estate) = lower($4))
+			  AND ($5 = '' OR lower(s.building) = lower($5))
+		),
+		coverage_serv AS (
+			SELECT 
+				COALESCE(c.location_id::text, u.id::text) AS id,
+				u.id AS isp_id,
+				COALESCE(u.name, '') AS isp_name,
+				COALESCE(c.location_id::text, '') AS location_id,
+				COALESCE(NULLIF($2,''), l.county, u.county, '') AS county,
+				COALESCE(NULLIF($3,''), l.name, '') AS town,
+				$4 AS estate,
+				$5 AS building,
+				'Fiber / Fixed Wireless' AS technology,
+				CASE 
+					WHEN NULLIF($1,'') IS NOT NULL AND c.location_id = NULLIF($1,'')::uuid THEN 'serviceable'
+					WHEN $3 <> '' AND lower(COALESCE(l.name,'')) = lower($3) THEN 'serviceable'
+					ELSE 'likely_serviceable'
+				END AS status,
+				2 AS estimated_days,
+				'Derived from active coverage network' AS reason,
+				true AS active,
+				u.created_at,
+				u.updated_at,
+				2 AS priority
+			FROM users u
+			JOIN isps i ON i.id = u.id AND i.is_active = true
+			LEFT JOIN isp_coverage_locations c ON c.isp_id = u.id
+			LEFT JOIN locations l ON l.id = c.location_id
+			WHERE u.status = 'active'
+			  AND u.id NOT IN (SELECT isp_id FROM explicit_serv)
+			  AND (
+			      (NULLIF($1,'') IS NOT NULL AND c.location_id = NULLIF($1,'')::uuid)
+			      OR ($2 <> '' AND (
+			          (l.county IS NOT NULL AND lower(l.county) = lower($2))
+			          OR (u.county IS NOT NULL AND lower(u.county) = lower($2))
+			          OR (i.county IS NOT NULL AND lower(i.county) = lower($2))
+			      ))
+			  )
+			  AND ($3 = '' OR lower(COALESCE(l.name,'')) = lower($3) OR lower(COALESCE(l.sub_county,'')) = lower($3) OR lower(COALESCE(i.sub_county,'')) = lower($3))
+		)
+		SELECT id, isp_id, isp_name, location_id, county, town, estate, building, technology, status, estimated_days, reason, active, created_at, updated_at
+		FROM (
+			SELECT DISTINCT ON (isp_id) *
+			FROM (
+				SELECT * FROM explicit_serv
+				UNION ALL
+				SELECT * FROM coverage_serv
+			) combined
+			ORDER BY isp_id, priority ASC
+		) final_results
+		ORDER BY 
+			CASE status WHEN 'serviceable' THEN 0 WHEN 'likely_serviceable' THEN 1 WHEN 'survey_required' THEN 2 ELSE 3 END,
+			estimated_days, updated_at DESC`, locationID, county, town, estate, building)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +131,9 @@ func (r *InstallationOperationsRepository) UpsertServiceability(item *models.Ser
 	if err == nil {
 		item.ID = existingID
 		_, err = r.writer.Exec(`UPDATE isp_serviceability SET technology=$1,status=$2,estimated_days=$3,reason=$4,active=true,updated_at=now() WHERE id=$5 AND isp_id=$6`, item.Technology, item.Status, item.EstimatedDays, item.Reason, existingID, item.ISPID)
+		if err == nil && item.LocationID != "" {
+			_, _ = r.writer.Exec(`INSERT INTO isp_coverage_locations(isp_id,location_id,created_at) SELECT $1,id,now() FROM locations WHERE id=$2 ON CONFLICT (isp_id,location_id) DO NOTHING`, item.ISPID, item.LocationID)
+		}
 		return err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -81,6 +141,9 @@ func (r *InstallationOperationsRepository) UpsertServiceability(item *models.Ser
 	}
 	_, err = r.writer.Exec(`INSERT INTO isp_serviceability(id,isp_id,location_id,county,town,estate,building,technology,status,estimated_days,reason,active)
 		VALUES($1,$2,NULLIF($3,'')::uuid,$4,$5,$6,$7,$8,$9,$10,$11,true)`, item.ID, item.ISPID, item.LocationID, item.County, item.Town, item.Estate, item.Building, item.Technology, item.Status, item.EstimatedDays, item.Reason)
+	if err == nil && item.LocationID != "" {
+		_, _ = r.writer.Exec(`INSERT INTO isp_coverage_locations(isp_id,location_id,created_at) SELECT $1,id,now() FROM locations WHERE id=$2 ON CONFLICT (isp_id,location_id) DO NOTHING`, item.ISPID, item.LocationID)
+	}
 	return err
 }
 
@@ -123,7 +186,17 @@ func (r *InstallationOperationsRepository) AddWaitlist(item *models.Serviceabili
 }
 
 func (r *InstallationOperationsRepository) ListWaitlist(ispID string) ([]*models.ServiceabilityWaitlist, error) {
-	rows, err := r.reader.Query(`SELECT id,COALESCE(customer_id::text,''),COALESCE(isp_id::text,''),COALESCE(location_id::text,''),county,town,estate,building,service_type,created_at FROM serviceability_waitlist WHERE isp_id=$1 OR (isp_id IS NULL AND EXISTS(SELECT 1 FROM isp_serviceability s WHERE s.isp_id=$1 AND lower(s.county)=lower(serviceability_waitlist.county) AND lower(s.town)=lower(serviceability_waitlist.town))) ORDER BY created_at DESC`, ispID)
+	rows, err := r.reader.Query(`
+		SELECT id,COALESCE(customer_id::text,''),COALESCE(isp_id::text,''),COALESCE(location_id::text,''),county,town,estate,building,service_type,created_at
+		FROM serviceability_waitlist
+		WHERE isp_id=$1 OR (
+			isp_id IS NULL AND (
+				EXISTS(SELECT 1 FROM isp_serviceability s WHERE s.isp_id=$1 AND lower(s.county)=lower(serviceability_waitlist.county) AND (s.town='' OR lower(s.town)=lower(serviceability_waitlist.town)))
+				OR EXISTS(SELECT 1 FROM isp_coverage_locations c JOIN locations l ON l.id=c.location_id WHERE c.isp_id=$1 AND lower(l.county)=lower(serviceability_waitlist.county) AND (serviceability_waitlist.town='' OR lower(l.name)=lower(serviceability_waitlist.town)))
+				OR EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND lower(COALESCE(u.county,''))=lower(serviceability_waitlist.county))
+			)
+		)
+		ORDER BY created_at DESC`, ispID)
 	if err != nil {
 		return nil, err
 	}

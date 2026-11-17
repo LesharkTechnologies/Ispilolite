@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -12,8 +13,13 @@ import (
 	"ispilolite/internal/repository/postgres"
 )
 
+type speedStatsReader interface {
+	GetCountyMonthlyStats(context.Context, string, string, int, int) (*models.CountyMonthlySpeedStats, error)
+}
+
 type InstallationOperationsHandler struct {
-	repo *postgres.InstallationOperationsRepository
+	repo      *postgres.InstallationOperationsRepository
+	speedRepo speedStatsReader
 }
 
 func NewInstallationOperationsHandler() (*InstallationOperationsHandler, error) {
@@ -21,17 +27,44 @@ func NewInstallationOperationsHandler() (*InstallationOperationsHandler, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &InstallationOperationsHandler{repo: repo}, nil
+	speedRepo, err := postgres.NewSpeedTestRepository()
+	if err != nil {
+		return nil, err
+	}
+	return &InstallationOperationsHandler{repo: repo, speedRepo: speedRepo}, nil
 }
 
 func (h *InstallationOperationsHandler) CheckServiceability(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	items, err := h.repo.CheckServiceability(q.Get("location_id"), q.Get("county"), q.Get("town"), q.Get("estate"), q.Get("building"))
+	county := strings.TrimSpace(q.Get("county"))
+	town := strings.TrimSpace(q.Get("town"))
+	items, err := h.repo.CheckServiceability(q.Get("location_id"), county, town, q.Get("estate"), q.Get("building"))
 	if err != nil {
 		respondWithInternalError(w, err)
 		return
 	}
-	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]interface{}{"items": items, "count": len(items)}})
+
+	data := map[string]interface{}{
+		"items": items,
+		"count": len(items),
+	}
+
+	lookupCounty := county
+	lookupTown := town
+	if lookupCounty == "" && len(items) > 0 {
+		lookupCounty = items[0].County
+		if lookupTown == "" {
+			lookupTown = items[0].Town
+		}
+	}
+
+	if lookupCounty != "" && h.speedRepo != nil {
+		if stats, err := h.speedRepo.GetCountyMonthlyStats(r.Context(), lookupCounty, lookupTown, 0, 0); err == nil && stats != nil {
+			data["speed_recommendation"] = stats
+		}
+	}
+
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: data})
 }
 
 func (h *InstallationOperationsHandler) UpsertServiceability(w http.ResponseWriter, r *http.Request) {

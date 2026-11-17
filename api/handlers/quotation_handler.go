@@ -47,6 +47,7 @@ func (h *QuotationHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	if base == "" {
 		base = "https://quotations.ispilo.co.ke"
 	}
+	recordAudit(r, "quotation.create", "CREATE", "quotation", q.ID, "Quotation created and finalized with code "+q.PublicCode, true, map[string]interface{}{"quotation_id": q.ID, "public_code": q.PublicCode})
 	respondWithJSON(w, 201, dto.APIResponse{Success: true, Message: "quotation finalized", Data: map[string]interface{}{"quotation": q, "public_url": base + "/" + q.PublicCode}})
 }
 func (h *QuotationHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +127,7 @@ func (h *QuotationHandler) Respond(w http.ResponseWriter, r *http.Request) {
 		h.respondError(w, err)
 		return
 	}
+	recordAudit(r, "quotation.respond", "UPDATE", "quotation", id, "Customer responded to quotation "+id+": "+req.Status, true, map[string]interface{}{"quotation_id": id, "status": req.Status})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "quotation status updated"})
 }
 func (h *QuotationHandler) Public(w http.ResponseWriter, r *http.Request) {

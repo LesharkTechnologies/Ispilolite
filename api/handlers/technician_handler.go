@@ -227,6 +227,7 @@ func (h *TechnicianHandler) ApplyToJob(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusConflict, "job is unavailable")
 		return
 	}
+	recordAudit(r, "job.apply", "REQUEST", "job", id, "Technician applied to job "+id, true, map[string]interface{}{"job_id": id, "proposed_price": req.ProposedPrice})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "application submitted"})
 }
 
@@ -243,6 +244,7 @@ func (h *TechnicianHandler) UpdateJobStatus(w http.ResponseWriter, r *http.Reque
 		h.respondJobRequestError(w, err)
 		return
 	}
+	recordAudit(r, "job.status_update", "UPDATE", "job", requestID, "Job status updated to "+request.Status, true, map[string]interface{}{"job_id": requestID, "status": request.Status, "warranty_days": request.WarrantyDays})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: job})
 }
 
@@ -267,6 +269,7 @@ func (h *TechnicianHandler) CreateJobRequest(w http.ResponseWriter, r *http.Requ
 		h.respondJobRequestError(w, err)
 		return
 	}
+	recordAudit(r, "job.request", "REQUEST", "job", job.ID, "Customer requested technician direct service", true, map[string]interface{}{"technician_id": technicianID, "job_id": job.ID})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: job})
 }
 

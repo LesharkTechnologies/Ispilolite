@@ -50,3 +50,34 @@ type SpeedTestModerationItem struct {
 	IP     string `json:"ip_address"`
 	UserID string `json:"user_id,omitempty"`
 }
+
+type CountyMonthlySpeedStats struct {
+	ID                    string    `json:"id"`
+	Year                  int       `json:"year"`
+	Month                 int       `json:"month"`
+	County                string    `json:"county"`
+	Town                  string    `json:"town,omitempty"`
+	ISPID                 string    `json:"isp_id,omitempty"`
+	ISPName               string    `json:"isp_name,omitempty"`
+	SampleCount           int       `json:"sample_count"`
+	MinDownloadMbps       float64   `json:"min_download_mbps"`
+	MaxDownloadMbps       float64   `json:"max_download_mbps"`
+	AvgDownloadMbps       float64   `json:"avg_download_mbps"`
+	MinUploadMbps         float64   `json:"min_upload_mbps"`
+	MaxUploadMbps         float64   `json:"max_upload_mbps"`
+	AvgUploadMbps         float64   `json:"avg_upload_mbps"`
+	AvgLatencyMs          float64   `json:"avg_latency_ms"`
+	RecommendationSummary string    `json:"recommendation_summary,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type CountySpeedBenchmark struct {
+	County          string  `json:"county"`
+	SampleCount     int     `json:"sample_count"`
+	MinDownloadMbps float64 `json:"min_download_mbps"`
+	MaxDownloadMbps float64 `json:"max_download_mbps"`
+	AvgDownloadMbps float64 `json:"avg_download_mbps"`
+	AvgUploadMbps   float64 `json:"avg_upload_mbps"`
+	AvgLatencyMs    float64 `json:"avg_latency_ms"`
+}

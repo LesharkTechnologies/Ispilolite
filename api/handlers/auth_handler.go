@@ -11,7 +11,6 @@ import (
 	"ispilolite/internal/repository/postgres"
 	"ispilolite/internal/repository/redis"
 	authsvc "ispilolite/internal/services/auth"
-	"ispilolite/pkg/audit"
 )
 
 type AuthHandler struct{ authService *authsvc.AuthService }
@@ -62,9 +61,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	_, expiresIn, err := h.authService.IssueOTP(user.ID)
+	_, expiresIn, err := h.authService.IssueOTPFromIP(user.ID, middleware.ClientIP(r))
 	if err != nil {
 		recordAudit(r, "user.register", "REGISTER", "user", user.ID, "registration OTP delivery failed", false, nil)
+		if errors.Is(err, authsvc.ErrRateLimited) {
+			w.Header().Set("Retry-After", "30")
+			respondWithError(w, http.StatusTooManyRequests, "please wait before requesting another verification code")
+			return
+		}
 		respondWithError(w, http.StatusInternalServerError, "failed to send verification code")
 		return
 	}
@@ -102,7 +106,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		var err error
 		user, err = h.authService.AuthenticateWithUsername(username, password)
 		if err != nil {
-			recordAudit(r, "user.login", "LOGIN", "user", "", "password login failed", false, map[string]interface{}{"phone": req.Phone, "username": req.Username})
+			recordAuditWithActor(r, "", "staff", "user.login", "LOGIN", "user", "", "Password login failed for username "+username, false, map[string]interface{}{"phone": req.Phone, "username": req.Username})
 			if errors.Is(err, authsvc.ErrAccountUnverified) {
 				respondWithError(w, http.StatusForbidden, "verify your phone number before logging in")
 				return
@@ -111,7 +115,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.respondWithTokens(w, user)
-		recordAudit(r, "user.login", "LOGIN", "user", user.ID, "password login succeeded", true, nil)
+		recordAuditWithActor(r, user.ID, user.Role, "user.login", "LOGIN", "user", user.ID, user.Role+" user "+user.Username+" logged in successfully", true, map[string]interface{}{"username": user.Username, "role": user.Role})
 		return
 	}
 	if password != "" {
@@ -119,18 +123,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "customers sign in with phone OTP; staff sign in with username and password")
 		return
 	}
-	user, expiresIn, err := h.authService.RequestLoginOTP(phone)
+	user, expiresIn, err := h.authService.RequestLoginOTPFromIP(phone, middleware.ClientIP(r))
 	if err != nil {
 		recordAudit(r, "user.login", "LOGIN", "user", "", "OTP login request failed", false, map[string]interface{}{"phone": phone})
+		if errors.Is(err, authsvc.ErrRateLimited) {
+			w.Header().Set("Retry-After", "30")
+			respondWithError(w, http.StatusTooManyRequests, "please wait before requesting another verification code")
+			return
+		}
 		respondWithError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	recordAudit(r, "user.login_otp_requested", "LOGIN", "user", user.ID, "login verification code sent", true, nil)
+	recordAuditWithActor(r, user.ID, user.Role, "user.login_otp_requested", "LOGIN", "user", user.ID, "login verification code sent to "+phone, true, map[string]interface{}{"phone": phone})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "OTP sent to your phone", Data: map[string]any{"user_id": user.ID, "expires_in": expiresIn}})
-}
-
-func recordAudit(r *http.Request, event, action, resourceType, resourceID, description string, success bool, metadata map[string]interface{}) {
-	_ = audit.Record(r.Context(), audit.Event{ActorID: userIDFromContext(r.Context()), ActorRole: userRoleFromContext(r.Context()), Event: event, Action: action, ResourceType: resourceType, ResourceID: resourceID, Description: description, Success: success, RequestID: middleware.RequestID(r.Context()), IPAddress: r.RemoteAddr, UserAgent: r.UserAgent(), Metadata: metadata})
 }
 
 func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
@@ -141,10 +146,17 @@ func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.authService.VerifyOTP(req.UserID, req.OTP)
 	if err != nil {
+		recordAuditWithActor(r, req.UserID, "customer", "user.verify_otp", "LOGIN", "user", req.UserID, "OTP verification failed", false, nil)
+		if errors.Is(err, authsvc.ErrRateLimited) {
+			w.Header().Set("Retry-After", "900")
+			respondWithError(w, http.StatusTooManyRequests, "too many verification attempts; request a new code later")
+			return
+		}
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	h.respondWithTokens(w, user)
+	recordAuditWithActor(r, user.ID, user.Role, "user.verify_otp", "LOGIN", "user", user.ID, user.Role+" user verified OTP and signed in", true, map[string]interface{}{"phone": user.Phone, "role": user.Role})
 }
 
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
@@ -155,9 +167,11 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 	accessToken, expiresIn, err := h.authService.RefreshAccessToken(req.RefreshToken)
 	if err != nil {
+		recordAudit(r, "user.refresh_token", "LOGIN", "token", "", "access token refresh failed", false, nil)
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	recordAudit(r, "user.refresh_token", "LOGIN", "token", "", "access token refreshed successfully", true, nil)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": expiresIn}})
 }
 
@@ -165,6 +179,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if token, err := bearerTokenFromRequest(r); err == nil {
 		h.authService.Logout(token)
 	}
+	recordAudit(r, "user.logout", "LOGIN", "user", userIDFromContext(r.Context()), "user logged out successfully", true, nil)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "logged out successfully"})
 }
 

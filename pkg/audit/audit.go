@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,11 +20,58 @@ import (
 )
 
 type Event struct {
-	ActorID, ActorRole, Event, Action, ResourceType, ResourceID, Description string
-	Success                                                                  bool
-	RequestID, IPAddress, UserAgent                                          string
-	Metadata                                                                 map[string]interface{}
-	OccurredAt                                                               time.Time
+	ActorID      string
+	ActorRole    string
+	Event        string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Description  string
+	Success      bool
+	RequestID    string
+	IPAddress    string
+	UserAgent    string
+	Metadata     map[string]interface{}
+	OccurredAt   time.Time
+}
+
+type EventView struct {
+	ID            string                 `json:"id"`
+	ActorID       string                 `json:"actor_id"`
+	UserID        string                 `json:"user_id"`
+	ActorRole     string                 `json:"actor_role"`
+	UserCategory  string                 `json:"user_category"`
+	ActorName     string                 `json:"actor_name,omitempty"`
+	ActorUsername string                 `json:"actor_username,omitempty"`
+	ActorEmail    string                 `json:"actor_email,omitempty"`
+	ActorPhone    string                 `json:"actor_phone,omitempty"`
+	Event         string                 `json:"event"`
+	Action        string                 `json:"action"`
+	ResourceType  string                 `json:"resource_type"`
+	ResourceID    string                 `json:"resource_id"`
+	Description   string                 `json:"description"`
+	Success       bool                   `json:"success"`
+	Status        string                 `json:"status"`
+	RequestID     string                 `json:"request_id"`
+	IPAddress     string                 `json:"ip_address"`
+	UserAgent     string                 `json:"user_agent"`
+	Metadata      map[string]interface{} `json:"metadata"`
+	OccurredAt    time.Time              `json:"occurred_at"`
+	Time          string                 `json:"time"`
+}
+
+type ListFilter struct {
+	Event     string
+	ActorID   string
+	ActorRole string
+	Action    string
+	IPAddress string
+	Status    string
+	Search    string
+	StartTime *time.Time
+	EndTime   *time.Time
+	Limit     int
+	Offset    int
 }
 
 type Store struct {
@@ -34,6 +82,79 @@ type Store struct {
 var current struct {
 	sync.RWMutex
 	store *Store
+}
+
+var validActions = map[string]bool{
+	"CREATE":   true,
+	"UPDATE":   true,
+	"DELETE":   true,
+	"GET":      true,
+	"LOGIN":    true,
+	"REGISTER": true,
+	"REQUEST":  true,
+	"EXPORT":   true,
+	"SYSTEM":   true,
+}
+
+func cleanIP(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
+func cleanActorID(id string) string {
+	id = strings.TrimSpace(id)
+	if _, err := uuid.Parse(id); err != nil {
+		return ""
+	}
+	return id
+}
+
+func normalizeAction(action, event string) string {
+	a := strings.ToUpper(strings.TrimSpace(action))
+	if validActions[a] {
+		return a
+	}
+	ev := strings.ToLower(event)
+	switch {
+	case strings.Contains(ev, "login"):
+		return "LOGIN"
+	case strings.Contains(ev, "register"):
+		return "REGISTER"
+	case strings.Contains(ev, "create") || strings.Contains(ev, "provision") || strings.Contains(ev, "add"):
+		return "CREATE"
+	case strings.Contains(ev, "update") || strings.Contains(ev, "moderate") || strings.Contains(ev, "resolve") || strings.Contains(ev, "sync"):
+		return "UPDATE"
+	case strings.Contains(ev, "delete") || strings.Contains(ev, "remove") || strings.Contains(ev, "purge") || strings.Contains(ev, "withdraw"):
+		return "DELETE"
+	case strings.Contains(ev, "export"):
+		return "EXPORT"
+	case strings.Contains(ev, "request") || strings.Contains(ev, "apply"):
+		return "REQUEST"
+	default:
+		return "SYSTEM"
+	}
+}
+
+// UserCategory maps the internal actor role to a human-friendly user category:
+// "client" (for customers/clients), "isp", "technicians", "admin", or "anonymous".
+func UserCategory(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "customer", "client":
+		return "client"
+	case "isp":
+		return "isp"
+	case "technician", "technicians":
+		return "technicians"
+	case "admin":
+		return "admin"
+	case "":
+		return "anonymous"
+	default:
+		return strings.ToLower(strings.TrimSpace(role))
+	}
 }
 
 func Configure(db *sql.DB, root string) *Store {
@@ -57,9 +178,201 @@ func Record(ctx context.Context, event Event) error {
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = time.Now().UTC()
 	}
+	event.ActorID = cleanActorID(event.ActorID)
+	event.Action = normalizeAction(event.Action, event.Event)
+	event.IPAddress = cleanIP(event.IPAddress)
+	if event.Metadata == nil {
+		event.Metadata = make(map[string]interface{})
+	}
 	meta, _ := json.Marshal(event.Metadata)
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO audit_events(id,actor_id,actor_role,event,action,resource_type,resource_id,description,success,request_id,ip_address,user_agent,metadata,occurred_at) VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, uuid.NewString(), event.ActorID, event.ActorRole, event.Event, event.Action, event.ResourceType, event.ResourceID, event.Description, event.Success, event.RequestID, event.IPAddress, event.UserAgent, meta, event.OccurredAt)
 	return err
+}
+
+func (s *Store) List(ctx context.Context, filter ListFilter) ([]EventView, int, error) {
+	if s == nil || s.DB == nil {
+		return []EventView{}, 0, nil
+	}
+
+	var conditions []string
+	var args []interface{}
+	argIdx := 1
+
+	if filter.Event != "" {
+		conditions = append(conditions, fmt.Sprintf("a.event ILIKE $%d", argIdx))
+		args = append(args, "%"+strings.TrimSpace(filter.Event)+"%")
+		argIdx++
+	}
+
+	if filter.ActorID != "" {
+		actorUUID := cleanActorID(filter.ActorID)
+		if actorUUID != "" {
+			conditions = append(conditions, fmt.Sprintf("a.actor_id = $%d::uuid", argIdx))
+			args = append(args, actorUUID)
+			argIdx++
+		}
+	}
+
+	if filter.ActorRole != "" {
+		roleLower := strings.ToLower(strings.TrimSpace(filter.ActorRole))
+		if roleLower == "client" || roleLower == "customer" {
+			conditions = append(conditions, "(lower(a.actor_role) = 'client' OR lower(a.actor_role) = 'customer')")
+		} else if strings.HasPrefix(roleLower, "tech") {
+			conditions = append(conditions, "lower(a.actor_role) LIKE 'tech%'")
+		} else {
+			conditions = append(conditions, fmt.Sprintf("lower(a.actor_role) = $%d", argIdx))
+			args = append(args, roleLower)
+			argIdx++
+		}
+	}
+
+	if filter.Action != "" {
+		conditions = append(conditions, fmt.Sprintf("a.action = $%d", argIdx))
+		args = append(args, strings.ToUpper(strings.TrimSpace(filter.Action)))
+		argIdx++
+	}
+
+	if filter.IPAddress != "" {
+		conditions = append(conditions, fmt.Sprintf("a.ip_address ILIKE $%d", argIdx))
+		args = append(args, "%"+strings.TrimSpace(filter.IPAddress)+"%")
+		argIdx++
+	}
+
+	if filter.Status != "" {
+		st := strings.ToLower(strings.TrimSpace(filter.Status))
+		if st == "success" || st == "true" || st == "1" {
+			conditions = append(conditions, "a.success = true")
+		} else if st == "failed" || st == "failure" || st == "false" || st == "0" {
+			conditions = append(conditions, "a.success = false")
+		}
+	}
+
+	if filter.Search != "" {
+		searchPattern := "%" + strings.TrimSpace(filter.Search) + "%"
+		conditions = append(conditions, fmt.Sprintf("(a.description ILIKE $%d OR a.event ILIKE $%d OR a.ip_address ILIKE $%d OR COALESCE(u.name,'') ILIKE $%d OR COALESCE(u.username,'') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+		args = append(args, searchPattern)
+		argIdx++
+	}
+
+	if filter.StartTime != nil && !filter.StartTime.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("a.occurred_at >= $%d", argIdx))
+		args = append(args, *filter.StartTime)
+		argIdx++
+	}
+
+	if filter.EndTime != nil && !filter.EndTime.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("a.occurred_at <= $%d", argIdx))
+		args = append(args, *filter.EndTime)
+		argIdx++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			a.id,
+			COALESCE(a.actor_id::text, ''),
+			a.actor_role,
+			COALESCE(u.name, ''),
+			COALESCE(u.username, ''),
+			COALESCE(u.email, ''),
+			COALESCE(u.phone, ''),
+			a.event,
+			a.action,
+			a.resource_type,
+			a.resource_id,
+			a.description,
+			a.success,
+			a.request_id,
+			a.ip_address,
+			a.user_agent,
+			a.metadata,
+			a.occurred_at,
+			count(*) OVER() AS total_count
+		FROM audit_events a
+		LEFT JOIN users u ON u.id = a.actor_id
+		%s
+		ORDER BY a.occurred_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := s.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]EventView, 0)
+	total := 0
+
+	for rows.Next() {
+		var item EventView
+		var metaBytes []byte
+		var success bool
+		var at time.Time
+
+		err := rows.Scan(
+			&item.ID,
+			&item.ActorID,
+			&item.ActorRole,
+			&item.ActorName,
+			&item.ActorUsername,
+			&item.ActorEmail,
+			&item.ActorPhone,
+			&item.Event,
+			&item.Action,
+			&item.ResourceType,
+			&item.ResourceID,
+			&item.Description,
+			&success,
+			&item.RequestID,
+			&item.IPAddress,
+			&item.UserAgent,
+			&metaBytes,
+			&at,
+			&total,
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		item.UserID = item.ActorID
+		item.Success = success
+		if success {
+			item.Status = "SUCCESS"
+		} else {
+			item.Status = "FAILED"
+		}
+
+		item.UserCategory = UserCategory(item.ActorRole)
+		item.OccurredAt = at
+		item.Time = at.UTC().Format("2006-01-02 15:04:05 UTC")
+
+		if len(metaBytes) > 0 {
+			_ = json.Unmarshal(metaBytes, &item.Metadata)
+		}
+		if item.Metadata == nil {
+			item.Metadata = make(map[string]interface{})
+		}
+
+		items = append(items, item)
+	}
+
+	return items, total, rows.Err()
 }
 
 func (s *Store) Export(ctx context.Context, kind string, start, end time.Time, createdBy string) (string, int, error) {

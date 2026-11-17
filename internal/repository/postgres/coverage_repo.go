@@ -34,7 +34,17 @@ func (r *coverageRepository) ListISPCoverage(ispID, county string) ([]*models.Lo
 
 func (r *coverageRepository) AddISPCoverage(ispID, locationID string) error {
 	_, err := r.dbWriter.Exec(`INSERT INTO isp_coverage_locations (isp_id,location_id,created_at) SELECT $1,id,now() FROM locations WHERE id=$2 ON CONFLICT (isp_id,location_id) DO NOTHING`, ispID, locationID)
-	return err
+	if err != nil {
+		return err
+	}
+	_, _ = r.dbWriter.Exec(`
+		INSERT INTO isp_serviceability (id, isp_id, location_id, county, town, estate, building, technology, status, estimated_days, reason, active)
+		SELECT gen_random_uuid(), $1, l.id, l.county, l.name, '', '', 'Fiber / Fixed Wireless', 'serviceable', 2, 'Verified network coverage', true
+		FROM locations l
+		WHERE l.id = $2
+		ON CONFLICT (isp_id, COALESCE(location_id::text, ''), lower(county), lower(town), lower(estate), lower(building))
+		DO UPDATE SET active = true, updated_at = now()`, ispID, locationID)
+	return nil
 }
 
 func (r *coverageRepository) RemoveISPCoverage(ispID, locationID string) error {
@@ -49,6 +59,7 @@ func (r *coverageRepository) RemoveISPCoverage(ispID, locationID string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	_, _ = r.dbWriter.Exec(`UPDATE isp_serviceability SET active=false, updated_at=now() WHERE isp_id=$1 AND location_id=$2`, ispID, locationID)
 	return nil
 }
 

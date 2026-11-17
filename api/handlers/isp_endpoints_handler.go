@@ -405,6 +405,7 @@ func (h *ISPEndpointsHandler) AddTechnician(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusInternalServerError, "failed to send technician verification code")
 		return
 	}
+	recordAudit(r, "isp.technician_add", "CREATE", "technician", technician.ID, "ISP added technician "+technician.Username, true, map[string]interface{}{"technician_id": technician.ID, "username": technician.Username})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "technician registered; phone verification required", Data: map[string]any{"technician_id": technician.ID, "company_technician_id": companyID, "expires_in": expiresIn}})
 }
 
@@ -438,6 +439,7 @@ func (h *ISPEndpointsHandler) RemoveTechnician(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	recordAudit(r, "isp.technician_remove", "DELETE", "technician", technicianID, "ISP removed technician "+technicianID, true, map[string]interface{}{"technician_id": technicianID})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "technician removed"})
 }
 
@@ -457,6 +459,7 @@ func (h *ISPEndpointsHandler) CreatePackage(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	recordAudit(r, "package.create", "CREATE", "isp_package", pkg.ID, "ISP created internet package "+pkg.Name, true, map[string]interface{}{"package_id": pkg.ID, "name": pkg.Name})
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Data: pkg})
 }
 
@@ -481,6 +484,7 @@ func (h *ISPEndpointsHandler) UpdatePackage(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusInternalServerError, "failed to update package")
 		return
 	}
+	recordAudit(r, "package.update", "UPDATE", "isp_package", pkg.ID, "ISP updated internet package "+pkg.Name, true, map[string]interface{}{"package_id": pkg.ID, "name": pkg.Name})
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: pkg})
 }
 
@@ -516,6 +520,7 @@ func (h *ISPEndpointsHandler) ArchivePackage(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, 404, "package not found")
 		return
 	}
+	recordAudit(r, "package.archive", "UPDATE", "isp_package", id, "ISP archived package "+id, true, map[string]interface{}{"package_id": id})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Message: "package archived"})
 }
 func (h *ISPEndpointsHandler) DeletePackage(w http.ResponseWriter, r *http.Request) {

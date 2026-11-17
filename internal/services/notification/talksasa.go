@@ -15,16 +15,45 @@ import (
 const defaultTalksasaBaseURL = "https://bulksms.talksasa.com/api/v3"
 
 type TalksasaSender struct {
-	baseURL  string
-	token    string
-	senderID string
-	client   *http.Client
+	baseURL, token, senderID string
+	client                   *http.Client
 }
-
 type talksasaResponse struct {
 	Status  string          `json:"status"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
+}
+
+func (s *TalksasaSender) GetBalance(ctx context.Context) (string, error) {
+	data, err := s.requestJSON(ctx, http.MethodGet, "/balance", nil)
+	if err != nil {
+		return "", err
+	}
+	var value string
+	if json.Unmarshal(data, &value) == nil && value != "" {
+		return value, nil
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err == nil {
+		for _, key := range []string{"remaining_balance", "balance", "remaining"} {
+			if v, ok := object[key]; ok {
+				return fmt.Sprint(v), nil
+			}
+		}
+	}
+	return string(data), nil
+}
+
+func (s *TalksasaSender) GetProfile(ctx context.Context) (any, error) {
+	return s.requestData(ctx, http.MethodGet, "/me", nil)
+}
+
+func (s *TalksasaSender) ListContactGroups(ctx context.Context) (any, error) {
+	return s.requestData(ctx, http.MethodGet, "/contact-groups", nil)
+}
+
+func (s *TalksasaSender) StoreContact(ctx context.Context, groupID, phone, firstName, lastName string) (any, error) {
+	return s.requestData(ctx, http.MethodPost, "/contact-groups/"+groupID+"/contacts", map[string]string{"phone": phone, "first_name": firstName, "last_name": lastName})
 }
 
 func NewTalksasaSender(baseURL, token, senderID string, client *http.Client) (*TalksasaSender, error) {
@@ -105,4 +134,63 @@ func (s *TalksasaSender) send(ctx context.Context, path string, payload any) err
 		return fmt.Errorf("talksasa SMS failed: %s", result.Message)
 	}
 	return nil
+}
+
+func (s *TalksasaSender) requestData(ctx context.Context, method, path string, payload any) (any, error) {
+	data, err := s.requestJSON(ctx, method, path, payload)
+	if err != nil {
+		return nil, err
+	}
+	var result talksasaResponse
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	if len(result.Data) == 0 {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(result.Data, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func (s *TalksasaSender) requestJSON(ctx context.Context, method, path string, payload any) ([]byte, error) {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, s.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	response, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("talksasa request: %w", err)
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var result talksasaResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("talksasa returned invalid JSON with status %d", response.StatusCode)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 || !strings.EqualFold(result.Status, "success") {
+		if result.Message == "" {
+			result.Message = response.Status
+		}
+		return nil, fmt.Errorf("talksasa request failed: %s", result.Message)
+	}
+	return raw, nil
 }

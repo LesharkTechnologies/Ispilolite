@@ -25,6 +25,10 @@ type Config struct {
 	TalksasaSenderID string
 	AdminAlertPhones string
 	AuditArchiveRoot string
+	AdminUsername    string
+	AdminPassword    string
+	AdminEmail       string
+	AdminPhone       string
 
 	// Elasticsearch configuration. When ESEnabled is false the search service
 	// runs Postgres-only (no fast path, no breaker).
@@ -69,6 +73,10 @@ func Load() (Config, error) {
 		TalksasaSenderID: os.Getenv("TALKSASA_SENDER_ID"),
 		AdminAlertPhones: os.Getenv("ADMIN_ALERT_PHONES"),
 		AuditArchiveRoot: getenv("AUDIT_ARCHIVE_ROOT", "storage/audit"),
+		AdminUsername:    strings.TrimSpace(os.Getenv("ADMIN_USERNAME")),
+		AdminPassword:    strings.TrimSpace(os.Getenv("ADMIN_PASSWORD")),
+		AdminEmail:       getenv("ADMIN_EMAIL", "admin@ispilo.co.ke"),
+		AdminPhone:       getenv("ADMIN_PHONE", "+254700000000"),
 
 		// Elasticsearch
 		ESEnabled:          parseBoolEnv("ES_ENABLED", true),

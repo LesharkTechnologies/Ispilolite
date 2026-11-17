@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -35,9 +36,11 @@ func (h *PaymentHandler) Initiate(w http.ResponseWriter, r *http.Request) {
 	}
 	intent, err := h.service.Initiate(r.Context(), jobID, userIDFromContext(r.Context()), input.Provider, input.Phone, key, input.Amount, input.Milestones)
 	if err != nil {
+		recordAudit(r, "payment.initiate", "CREATE", "escrow_payment", jobID, fmt.Sprintf("Payment initiation failed for job %s: %s", jobID, err.Error()), false, map[string]interface{}{"job_id": jobID, "provider": input.Provider, "amount": input.Amount})
 		respondWithErrorRaw(w, 400, err.Error())
 		return
 	}
+	recordAudit(r, "payment.initiate", "CREATE", "escrow_payment", jobID, fmt.Sprintf("Client initiated %s payment of %.2f for job %s", input.Provider, input.Amount, jobID), true, map[string]interface{}{"job_id": jobID, "provider": input.Provider, "amount": input.Amount})
 	respondWithJSON(w, 202, dto.APIResponse{Success: true, Data: intent})
 }
 
@@ -56,9 +59,11 @@ func (h *PaymentHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	escrow, err := h.service.HandleWebhook(r.Context(), provider, headers, body)
 	if err != nil {
+		recordAudit(r, "payment.webhook", "SYSTEM", "payment_provider", provider, "Payment webhook rejected for provider "+provider, false, map[string]interface{}{"provider": provider})
 		respondWithErrorRaw(w, 400, "webhook rejected")
 		return
 	}
+	recordAudit(r, "payment.webhook", "SYSTEM", "payment_provider", provider, "Payment webhook processed successfully for provider "+provider, true, map[string]interface{}{"provider": provider})
 	respondWithJSON(w, 200, dto.APIResponse{Success: true, Data: escrow})
 }
 
@@ -73,9 +78,11 @@ func (h *PaymentHandler) Settlement(w http.ResponseWriter, r *http.Request) {
 		headers.Set("X-Webhook-Token", r.URL.Query().Get("token"))
 	}
 	if err := h.service.ConfirmSettlement(r.Context(), headers, body); err != nil {
+		recordAudit(r, "payment.settlement", "SYSTEM", "settlement", "", "Payment settlement confirmation rejected", false, nil)
 		respondWithErrorRaw(w, 400, "settlement rejected")
 		return
 	}
+	recordAudit(r, "payment.settlement", "SYSTEM", "settlement", "", "Payment settlement confirmed successfully", true, nil)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "settlement recorded"})
 }
 
@@ -100,8 +107,10 @@ func (h *PaymentHandler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := h.service.Release(r.Context(), escrowID, userIDFromContext(r.Context()), input.MilestoneID)
 	if err != nil {
+		recordAudit(r, "payment.release", "UPDATE", "escrow_payment", escrowID, "Escrow release failed: "+err.Error(), false, map[string]interface{}{"escrow_id": escrowID, "milestone_id": input.MilestoneID})
 		respondWithErrorRaw(w, 409, err.Error())
 		return
 	}
+	recordAudit(r, "payment.release", "UPDATE", "escrow_payment", escrowID, "Client released escrow payment milestone "+input.MilestoneID, true, map[string]interface{}{"escrow_id": escrowID, "milestone_id": input.MilestoneID})
 	respondWithJSON(w, 202, dto.APIResponse{Success: true, Message: "release requested", Data: item})
 }

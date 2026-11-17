@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	dto "ispilolite/api/dto"
+	"ispilolite/internal/middleware"
+	"ispilolite/pkg/audit"
 )
 
 const maxJSONBodyBytes = 1 << 20
@@ -119,4 +121,44 @@ func safeMessage(err error) string {
 		return "internal server error"
 	}
 	return err.Error()
+}
+
+func recordAudit(r *http.Request, event, action, resourceType, resourceID, description string, success bool, metadata map[string]interface{}) {
+	recordAuditWithActor(r, "", "", event, action, resourceType, resourceID, description, success, metadata)
+}
+
+func recordAuditWithActor(r *http.Request, actorID, actorRole, event, action, resourceType, resourceID, description string, success bool, metadata map[string]interface{}) {
+	ip := ""
+	reqID := ""
+	userAgent := ""
+	ctx := context.Background()
+	if r != nil {
+		ip = middleware.ClientIP(r)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
+		reqID = middleware.RequestID(r.Context())
+		userAgent = r.UserAgent()
+		ctx = r.Context()
+		if actorID == "" {
+			actorID = userIDFromContext(ctx)
+		}
+		if actorRole == "" {
+			actorRole = userRoleFromContext(ctx)
+		}
+	}
+	_ = audit.Record(ctx, audit.Event{
+		ActorID:      actorID,
+		ActorRole:    actorRole,
+		Event:        event,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Description:  description,
+		Success:      success,
+		RequestID:    reqID,
+		IPAddress:    ip,
+		UserAgent:    userAgent,
+		Metadata:     metadata,
+	})
 }

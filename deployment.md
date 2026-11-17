@@ -191,7 +191,7 @@ ES_ADDRESSES=http://127.0.0.1:9200
 # --- SMS (Talksasa) ---
 TALKSASA_BASE_URL=https://bulksms.talksasa.com/api/v3
 TALKSASA_API_TOKEN=<your-talksasa-token>
-TALKSASA_SENDER_ID=TALKSASA
+TALKSASA_SENDER_ID=TALK-SASA
 
 # --- Message queue ---
 RABBITMQ_URL=amqp://ispilo:<STRONG_RABBIT_PASSWORD>@127.0.0.1:5672/ispilo_vhost

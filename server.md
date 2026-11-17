@@ -106,7 +106,7 @@ ES_ENSURE_INDICES=true
 # SMS
 TALKSASA_BASE_URL=https://bulksms.talksasa.com/api/v3
 TALKSASA_API_TOKEN=<rotated-token>
-TALKSASA_SENDER_ID=TALKSASA
+TALKSASA_SENDER_ID=TALK-SASA
 
 # Queue
 RABBITMQ_URL=amqp://ispilo:pass@rabbitmq:5672/
