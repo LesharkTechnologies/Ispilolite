@@ -215,7 +215,7 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 		)
 		SELECT
 			gen_random_uuid(),
-			$1, $2,
+			  $1::integer, $2::integer,
 			st.county,
 			st.town,
 			st.isp_id,
@@ -230,8 +230,8 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 			COALESCE(ROUND(AVG(st.latency_ms), 2), 0),
 			NOW(), NOW()
 		FROM speed_tests st
-		WHERE EXTRACT(YEAR FROM st.created_at) = $1
-		  AND EXTRACT(MONTH FROM st.created_at) = $2
+		WHERE EXTRACT(YEAR FROM st.created_at) = $1::integer
+		  AND EXTRACT(MONTH FROM st.created_at) = $2::integer
 		  AND st.status IN ('accepted', 'pending')
 		  AND trim(st.county) <> ''
 		GROUP BY st.county, st.town, st.isp_id
@@ -261,7 +261,7 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 		)
 		SELECT
 			gen_random_uuid(),
-			$1, $2,
+			$1::integer, $2::integer,
 			st.county,
 			st.town,
 			NULL,
@@ -276,8 +276,8 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 			COALESCE(ROUND(AVG(st.latency_ms), 2), 0),
 			NOW(), NOW()
 		FROM speed_tests st
-		WHERE EXTRACT(YEAR FROM st.created_at) = $1
-		  AND EXTRACT(MONTH FROM st.created_at) = $2
+		WHERE EXTRACT(YEAR FROM st.created_at) = $1::integer
+		  AND EXTRACT(MONTH FROM st.created_at) = $2::integer
 		  AND st.status IN ('accepted', 'pending')
 		  AND trim(st.county) <> ''
 		GROUP BY st.county, st.town
@@ -307,7 +307,7 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 		)
 		SELECT
 			gen_random_uuid(),
-			$1, $2,
+			$1::integer, $2::integer,
 			st.county,
 			'',
 			NULL,
@@ -322,8 +322,8 @@ func (r *SpeedTestRepository) AggregateMonthlySpeedStats(ctx context.Context, ye
 			COALESCE(ROUND(AVG(st.latency_ms), 2), 0),
 			NOW(), NOW()
 		FROM speed_tests st
-		WHERE EXTRACT(YEAR FROM st.created_at) = $1
-		  AND EXTRACT(MONTH FROM st.created_at) = $2
+		WHERE EXTRACT(YEAR FROM st.created_at) = $1::integer
+		  AND EXTRACT(MONTH FROM st.created_at) = $2::integer
 		  AND st.status IN ('accepted', 'pending')
 		  AND trim(st.county) <> ''
 		GROUP BY st.county

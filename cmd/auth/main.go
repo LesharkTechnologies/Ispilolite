@@ -95,7 +95,7 @@ func main() {
 
 	// SSE streams can remain open for hours; a server-wide WriteTimeout would
 	// close them after 30s. The reverse proxy should enforce client limits.
-	srv := &http.Server{Addr: ":" + strconv.Itoa(cfg.Port), Handler: middleware.WriteDeadline(30 * time.Second)(handler), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second}
+	srv := &http.Server{Addr: "127.0.0.1:" + strconv.Itoa(cfg.Port), Handler: middleware.WriteDeadline(30 * time.Second)(handler), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second}
 	go func() {
 		log.Printf("ispilolite api listening on %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
