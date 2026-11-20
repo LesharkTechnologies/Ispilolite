@@ -192,7 +192,7 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		}
 		return nil
 	}
-	allowedFrom := map[string]string{"accepted": "open,viewed,quoted,assigned", "in_progress": "accepted,scheduled", "completed": "in_progress"}[status]
+	allowedFrom := map[string]string{"accepted": "open,viewed,quoted,assigned,scheduled", "in_progress": "accepted,scheduled", "completed": "in_progress"}[status]
 	if allowedFrom == "" {
 		return sql.ErrNoRows
 	}
