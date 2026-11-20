@@ -87,7 +87,7 @@ func (h *CustomerFlagHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "reported_phone must be a valid phone number")
 		return
 	}
-	images, err := validation.CloudinaryURLs(input.ImageURLs, 3)
+	images, err := validation.MediaURLs(input.ImageURLs, 3)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return

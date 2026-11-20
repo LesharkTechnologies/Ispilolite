@@ -8,6 +8,7 @@ import (
 	"ispilolite/api/dto"
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository/postgres"
+	"ispilolite/internal/validation"
 	"time"
 )
 
@@ -65,6 +66,14 @@ func (h *BillingHandler) Create(w http.ResponseWriter, r *http.Request) {
 	slug := strings.ToLower(strings.TrimSpace(req.Name))
 	slug = strings.ReplaceAll(slug, " ", "-")
 	item := &models.BillingSystem{Name: strings.TrimSpace(req.Name), Slug: slug, LogoURL: strings.TrimSpace(req.LogoURL), Description: strings.TrimSpace(req.Description), OwnerCompany: strings.TrimSpace(req.OwnerCompany), OwnerPhone: strings.TrimSpace(req.OwnerPhone), SupportPhone: strings.TrimSpace(req.SupportPhone), SupportWhatsApp: strings.TrimSpace(req.SupportWhatsApp), SupportEmail: strings.TrimSpace(req.SupportEmail), SupportHours: strings.TrimSpace(req.SupportHours), WebsiteURL: strings.TrimSpace(req.WebsiteURL), LoginURL: strings.TrimSpace(req.LoginURL), ReferralURL: strings.TrimSpace(req.ReferralURL)}
+	if item.LogoURL != "" {
+		urls, err := validation.MediaURLs([]string{item.LogoURL}, 1)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		item.LogoURL = urls[0]
+	}
 	if err := h.repo.Create(r.Context(), item, userIDFromContext(r.Context())); err != nil {
 		respondWithError(w, http.StatusBadRequest, "failed to create billing system")
 		return
@@ -80,6 +89,14 @@ func (h *BillingHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ID = id
+	if strings.TrimSpace(req.LogoURL) != "" {
+		urls, err := validation.MediaURLs([]string{req.LogoURL}, 1)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.LogoURL = urls[0]
+	}
 	if err := h.repo.Update(r.Context(), &req, userIDFromContext(r.Context())); err != nil {
 		respondWithError(w, http.StatusForbidden, "update not allowed")
 		return

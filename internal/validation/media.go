@@ -7,17 +7,23 @@ import (
 	"strings"
 )
 
-// CloudinaryURLs validates delivery URLs uploaded by the client directly to
-// Cloudinary. The API never accepts image bytes and never fetches these URLs.
-func CloudinaryURLs(values []string, max int) ([]string, error) {
+// MediaURLs validates Cloudflare R2 delivery URLs returned by the media API.
+// Callers store only delivery URLs; R2 access keys and presigned upload URLs
+// must never be persisted in business records.
+func MediaURLs(values []string, max int) ([]string, error) {
 	if max <= 0 {
 		max = 5
 	}
 	if len(values) > max {
 		return nil, fmt.Errorf("at most %d media URLs are allowed", max)
 	}
-	allowed := []string{"res.cloudinary.com"}
-	for _, host := range strings.Split(os.Getenv("CLOUDINARY_ALLOWED_HOSTS"), ",") {
+	allowed := []string{"media.ispilo.co.ke"}
+	if publicBase := strings.TrimSpace(os.Getenv("R2_PUBLIC_BASE_URL")); publicBase != "" {
+		if parsed, err := url.Parse(publicBase); err == nil && parsed.Hostname() != "" {
+			allowed = append(allowed, strings.ToLower(parsed.Hostname()))
+		}
+	}
+	for _, host := range strings.Split(os.Getenv("R2_ALLOWED_HOSTS"), ",") {
 		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
 			allowed = append(allowed, host)
 		}
@@ -33,8 +39,8 @@ func CloudinaryURLs(values []string, max int) ([]string, error) {
 			return nil, fmt.Errorf("media URL is too long")
 		}
 		u, err := url.ParseRequestURI(raw)
-		if err != nil || !strings.EqualFold(u.Scheme, "https") || u.User != nil || u.Hostname() == "" {
-			return nil, fmt.Errorf("media URLs must be valid HTTPS Cloudinary URLs")
+		if err != nil || !strings.EqualFold(u.Scheme, "https") || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("media URLs must be R2 HTTPS delivery URLs")
 		}
 		host := strings.ToLower(u.Hostname())
 		validHost := false
@@ -45,7 +51,7 @@ func CloudinaryURLs(values []string, max int) ([]string, error) {
 			}
 		}
 		if !validHost {
-			return nil, fmt.Errorf("media URL host %q is not an allowed Cloudinary host", host)
+			return nil, fmt.Errorf("media URL host %q is not an allowed R2 host", host)
 		}
 		if !seen[raw] {
 			seen[raw] = true

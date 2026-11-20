@@ -36,7 +36,7 @@ func (s *Service) Search(skill string, available bool, limit int) ([]*models.Tec
 	return s.repo.SearchTechnicians(strings.TrimSpace(skill), available, limit)
 }
 func (s *Service) CreatePost(id string, p *models.TechnicianPost) (*models.TechnicianPost, error) {
-	media, err := validation.CloudinaryURLs(p.MediaURLs, 10)
+	media, err := validation.MediaURLs(p.MediaURLs, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (s *Service) CreatePost(id string, p *models.TechnicianPost) (*models.Techn
 	return p, nil
 }
 func (s *Service) UpdatePost(id, owner string, p *models.TechnicianPost) (*models.TechnicianPost, error) {
-	media, err := validation.CloudinaryURLs(p.MediaURLs, 10)
+	media, err := validation.MediaURLs(p.MediaURLs, 10)
 	if err != nil {
 		return nil, err
 	}

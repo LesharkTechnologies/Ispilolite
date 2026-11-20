@@ -34,6 +34,7 @@ type JobRequest struct {
 	ServiceType          string            `json:"service_type" db:"service_type"`
 	SpeedMbps            int               `json:"speed_mbps,omitempty" db:"speed_mbps"`
 	Description          string            `json:"description" db:"description"`
+	PhotoURLs            []string          `json:"photo_urls,omitempty" db:"-"`
 	Budget               float64           `json:"budget" db:"budget"`
 	PreferredDate        *time.Time        `json:"preferred_date,omitempty" db:"preferred_date"`
 	DeadlineAt           *time.Time        `json:"deadline_at,omitempty" db:"deadline_at"`

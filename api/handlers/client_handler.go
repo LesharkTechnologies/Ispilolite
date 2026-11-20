@@ -20,6 +20,8 @@ import (
 	"ispilolite/internal/services/isp"
 	"ispilolite/internal/services/jobrequest"
 	"ispilolite/internal/services/user"
+	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
 	"ispilolite/pkg/database"
 )
 
@@ -79,6 +81,14 @@ func (h *ClientHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if decodeJSON(w, r, &req) != nil {
 		respondWithError(w, 400, "invalid request payload")
 		return
+	}
+	if value := strings.TrimSpace(req.AvatarURL); value != "" {
+		urls, mediaErr := validation.MediaURLs([]string{value}, 1)
+		if mediaErr != nil {
+			respondWithError(w, http.StatusBadRequest, mediaErr.Error())
+			return
+		}
+		req.AvatarURL = urls[0]
 	}
 	u, err := h.users.GetUserByID(userIDFromContext(r.Context()))
 	if err != nil {
@@ -198,6 +208,41 @@ func (h *ClientHandler) ChangeAccountType(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	isSwitchingToPro := targetRole == models.RoleTechnician || targetRole == models.RoleISP || targetRole == models.RoleBoth
+	if isSwitchingToPro {
+		// Require password if user currently doesn't have one (e.g. was customer)
+		if existingUser.PasswordHash == "" {
+			if len(strings.TrimSpace(req.Password)) < 8 {
+				respondWithError(w, http.StatusBadRequest, "an 8-character password is required when switching to technician or ISP")
+				return
+			}
+		}
+		// Require username if user currently doesn't have one
+		if existingUser.Username == "" && strings.TrimSpace(req.Username) == "" {
+			respondWithError(w, http.StatusBadRequest, "a username is required when switching to technician or ISP")
+			return
+		}
+		// If switching to ISP, validate company name and customer care number
+		if targetRole == models.RoleISP {
+			if strings.TrimSpace(req.CompanyName) == "" && strings.TrimSpace(existingUser.Name) == "" {
+				respondWithError(w, http.StatusBadRequest, "company name is required for ISP accounts")
+				return
+			}
+			if strings.TrimSpace(req.CustomerCareNumber) == "" && strings.TrimSpace(existingUser.Phone) == "" {
+				respondWithError(w, http.StatusBadRequest, "customer care phone number is required for ISP accounts")
+				return
+			}
+		}
+	}
+	if value := strings.TrimSpace(req.LogoURL); value != "" {
+		urls, mediaErr := validation.MediaURLs([]string{value}, 1)
+		if mediaErr != nil {
+			respondWithError(w, http.StatusBadRequest, mediaErr.Error())
+			return
+		}
+		req.LogoURL = urls[0]
+	}
+
 	// Check 24-hour cooldown
 	if existingUser.RoleChangedAt != nil {
 		elapsed := time.Since(*existingUser.RoleChangedAt)
@@ -216,6 +261,40 @@ func (h *ClientHandler) ChangeAccountType(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	userUpdated := false
+	if len(strings.TrimSpace(req.Password)) >= 8 {
+		hash, err := utils.HashPassword(strings.TrimSpace(req.Password))
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "failed to hash password")
+			return
+		}
+		existingUser.PasswordHash = hash
+		userUpdated = true
+	}
+	if strings.TrimSpace(req.Username) != "" {
+		existingUser.Username = strings.TrimSpace(req.Username)
+		userUpdated = true
+	}
+	if strings.TrimSpace(req.County) != "" {
+		existingUser.County = strings.TrimSpace(req.County)
+		userUpdated = true
+	}
+	if strings.TrimSpace(req.Town) != "" {
+		existingUser.Town = strings.TrimSpace(req.Town)
+		userUpdated = true
+	}
+	if strings.TrimSpace(req.DisplayName) != "" {
+		existingUser.DisplayName = strings.TrimSpace(req.DisplayName)
+		userUpdated = true
+	}
+	if strings.TrimSpace(req.CompanyName) != "" && (targetRole == models.RoleISP || targetRole == models.RoleBoth) {
+		existingUser.Name = strings.TrimSpace(req.CompanyName)
+		userUpdated = true
+	}
+	if userUpdated {
+		_ = h.users.UpdateUser(existingUser)
+	}
+
 	if err := h.users.ChangeAccountType(uid, targetRole, false); err != nil {
 		if errors.Is(err, postgres.ErrRoleChangeCooldown) || strings.Contains(err.Error(), "24 hours") {
 			respondWithError(w, http.StatusTooManyRequests, "account type can only be changed once every 24 hours. Contact admin for review.")
@@ -223,6 +302,64 @@ func (h *ClientHandler) ChangeAccountType(w http.ResponseWriter, r *http.Request
 		}
 		respondWithError(w, http.StatusInternalServerError, "failed to update account type: "+err.Error())
 		return
+	}
+
+	// Update technician profile details if switching to technician
+	if (targetRole == models.RoleTechnician || targetRole == models.RoleBoth) && h.db != nil {
+		bio := strings.TrimSpace(req.Bio)
+		var price float64
+		if req.PricePerHour != nil {
+			price = *req.PricePerHour
+		}
+		var exp int
+		if req.ExperienceYears != nil {
+			exp = *req.ExperienceYears
+		}
+		_, _ = h.db.ExecContext(r.Context(), `
+			INSERT INTO technician_profiles(technician_id, bio, experience_years, price_per_hour, is_available, county, town, updated_at)
+			VALUES($1, $2, $3, $4, true, $5, $6, now())
+			ON CONFLICT(technician_id) DO UPDATE SET
+				bio = CASE WHEN $2 <> '' THEN $2 ELSE technician_profiles.bio END,
+				experience_years = CASE WHEN $3 > 0 THEN $3 ELSE technician_profiles.experience_years END,
+				price_per_hour = CASE WHEN $4 > 0 THEN $4 ELSE technician_profiles.price_per_hour END,
+				county = CASE WHEN $5 <> '' THEN $5 ELSE technician_profiles.county END,
+				town = CASE WHEN $6 <> '' THEN $6 ELSE technician_profiles.town END,
+				updated_at = now()
+		`, uid, bio, exp, price, existingUser.County, existingUser.Town)
+
+		if len(req.Skills) > 0 {
+			for _, skill := range req.Skills {
+				if s := strings.TrimSpace(skill); s != "" {
+					_, _ = h.db.ExecContext(r.Context(), `INSERT INTO technician_profile_skills(technician_id, skill) VALUES($1, $2) ON CONFLICT DO NOTHING`, uid, s)
+					_, _ = h.db.ExecContext(r.Context(), `INSERT INTO technician_skills(technician_id, skill) SELECT id, $2 FROM technicians WHERE id=$1 OR user_id=$1 ON CONFLICT DO NOTHING`, uid, s)
+				}
+			}
+		}
+	}
+
+	// Update ISP profile details if switching to ISP
+	if (targetRole == models.RoleISP || targetRole == models.RoleBoth) && h.db != nil {
+		ispName := strings.TrimSpace(req.CompanyName)
+		if ispName == "" {
+			ispName = existingUser.Name
+		}
+		logo := strings.TrimSpace(req.LogoURL)
+		care := strings.TrimSpace(req.CustomerCareNumber)
+		if care == "" {
+			care = existingUser.Phone
+		}
+		desc := strings.TrimSpace(req.Description)
+		_, _ = h.db.ExecContext(r.Context(), `
+			INSERT INTO isps(id, name, logo_url, customer_care_number, description, county, created_at, updated_at)
+			VALUES($1, $2, $3, $4, $5, $6, now(), now())
+			ON CONFLICT(id) DO UPDATE SET
+				name = CASE WHEN $2 <> '' THEN $2 ELSE isps.name END,
+				logo_url = CASE WHEN $3 <> '' THEN $3 ELSE isps.logo_url END,
+				customer_care_number = CASE WHEN $4 <> '' THEN $4 ELSE isps.customer_care_number END,
+				description = CASE WHEN $5 <> '' THEN $5 ELSE isps.description END,
+				county = CASE WHEN $6 <> '' THEN $6 ELSE isps.county END,
+				updated_at = now()
+		`, uid, ispName, logo, care, desc, existingUser.County)
 	}
 
 	updatedUser, err := h.users.GetUserByID(uid)
@@ -242,16 +379,18 @@ func (h *ClientHandler) ChangeAccountType(w http.ResponseWriter, r *http.Request
 			"role_changed_at": updatedUser.RoleChangedAt,
 		})
 
+	report := h.computeCompletionReport(r.Context(), updatedUser)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{
 		Success: true,
 		Message: fmt.Sprintf("account type successfully changed to %s", updatedUser.Role),
 		Data: map[string]interface{}{
-			"user":            updatedUser,
-			"token":           newToken,
-			"token_type":      "Bearer",
-			"role":            updatedUser.Role,
-			"role_changed_at": updatedUser.RoleChangedAt,
-			"cooldown_hours":  24,
+			"user":              updatedUser,
+			"token":             newToken,
+			"token_type":        "Bearer",
+			"role":              updatedUser.Role,
+			"role_changed_at":   updatedUser.RoleChangedAt,
+			"cooldown_hours":    24,
+			"completion_report": report,
 		},
 	})
 }
@@ -286,7 +425,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		VerifiedName:   u.VerifiedName,
 		UploadInstructions: map[string]string{
 			"media_upload":      "POST /api/v1/media/upload (multipart form: kind=profile, portfolio, identity_document, isp_logo)",
-			"media_signature":   "POST /api/v1/media/upload-signature (for direct Cloudinary client-side upload)",
+			"media_signature":   "POST /api/v1/media/upload-signature (for direct Cloudflare R2 upload)",
 			"identity_verify":   "POST /api/v1/identity/verify (id_photo_url, id_photo_back_url, id_number, document_type)",
 			"fill_missing":      "PATCH /api/v1/my/profile/fill-missing (submit all unfulfilled fields in one payload)",
 			"display_name":      "PATCH /api/v1/my/display-name (set public moniker e.g. 'Leshark')",
@@ -303,7 +442,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "phone", Label: "Phone Number", Category: "profile",
 			Description: "Account phone number is required for verification",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -314,7 +453,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "name", Label: "Full Name", Category: "profile",
 			Description: "Your legal name",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -325,7 +464,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "display_name", Label: "Display Name / Moniker", Category: "profile",
 			Description: "Public moniker shown on discovery cards (e.g. 'Leshark')",
-			Endpoint: "/api/v1/my/display-name", Method: "PATCH",
+			Endpoint:    "/api/v1/my/display-name", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -336,7 +475,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "avatar_url", Label: "Profile Picture / Avatar", Category: "profile",
 			Description: "Upload a profile photo via /media/upload?kind=profile",
-			Endpoint: "/api/v1/media/upload?kind=profile", Method: "POST",
+			Endpoint:    "/api/v1/media/upload?kind=profile", Method: "POST",
 		})
 	}
 	report.TotalRequired++
@@ -347,7 +486,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "location", Label: "County & Town", Category: "location",
 			Description: "Location to match nearby clients and jobs",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -364,7 +503,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "id_photo_url", Label: "Identity Verification Document", Category: "identity",
 				Description: "Upload ID photo/passport or business permit to receive verified badge",
-				Endpoint: "/api/v1/identity/verify", Method: "POST",
+				Endpoint:    "/api/v1/identity/verify", Method: "POST",
 			})
 		}
 	}
@@ -389,7 +528,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "bio", Label: "Technician Bio / Experience", Category: "services",
 				Description: "Describe your experience, past installations, and specialties",
-				Endpoint: "/api/v1/my/portfolio/profile", Method: "PUT",
+				Endpoint:    "/api/v1/my/portfolio/profile", Method: "PUT",
 			})
 		}
 
@@ -399,7 +538,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "price_per_hour", Label: "Hourly Service Rate (KES)", Category: "services",
 				Description: "Set your hourly rate for marketplace card display",
-				Endpoint: "/api/v1/my/portfolio/profile", Method: "PUT",
+				Endpoint:    "/api/v1/my/portfolio/profile", Method: "PUT",
 			})
 		}
 
@@ -409,7 +548,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "skills", Label: "Technical Skills", Category: "services",
 				Description: "Add skills (fiber, wifi, cctv, splicing, networking)",
-				Endpoint: "/api/v1/my/skills", Method: "POST",
+				Endpoint:    "/api/v1/my/skills", Method: "POST",
 			})
 		}
 	}
@@ -429,7 +568,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "logo_url", Label: "Company Logo", Category: "profile",
 				Description: "Upload your company logo via /media/upload?kind=isp_logo",
-				Endpoint: "/api/v1/media/upload?kind=isp_logo", Method: "POST",
+				Endpoint:    "/api/v1/media/upload?kind=isp_logo", Method: "POST",
 			})
 		}
 
@@ -439,7 +578,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "customer_care_number", Label: "Customer Care Phone", Category: "profile",
 				Description: "Customer support helpline number",
-				Endpoint: "/api/v1/my/profile", Method: "PATCH",
+				Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 			})
 		}
 
@@ -449,7 +588,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "packages", Label: "Internet Packages", Category: "services",
 				Description: "Publish at least one internet package",
-				Endpoint: "/api/v1/my/packages", Method: "POST",
+				Endpoint:    "/api/v1/my/packages", Method: "POST",
 			})
 		}
 	}
@@ -480,6 +619,40 @@ func (h *ClientHandler) FillMissingProfile(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "user not found")
 		return
+	}
+	if value := strings.TrimSpace(req.AvatarURL); value != "" {
+		urls, mediaErr := validation.MediaURLs([]string{value}, 1)
+		if mediaErr != nil {
+			respondWithError(w, http.StatusBadRequest, mediaErr.Error())
+			return
+		}
+		req.AvatarURL = urls[0]
+	}
+	if value := strings.TrimSpace(req.LogoURL); value != "" {
+		urls, mediaErr := validation.MediaURLs([]string{value}, 1)
+		if mediaErr != nil {
+			respondWithError(w, http.StatusBadRequest, mediaErr.Error())
+			return
+		}
+		req.LogoURL = urls[0]
+	}
+	documents := []string{}
+	if strings.TrimSpace(req.IDPhotoURL) != "" {
+		documents = append(documents, req.IDPhotoURL)
+	}
+	if strings.TrimSpace(req.IDPhotoBackURL) != "" {
+		documents = append(documents, req.IDPhotoBackURL)
+	}
+	if len(documents) > 0 {
+		urls, mediaErr := validation.MediaURLs(documents, 2)
+		if mediaErr != nil {
+			respondWithError(w, http.StatusBadRequest, mediaErr.Error())
+			return
+		}
+		req.IDPhotoURL = urls[0]
+		if len(urls) > 1 {
+			req.IDPhotoBackURL = urls[1]
+		}
 	}
 
 	// 1. Update Display Name if provided
@@ -666,7 +839,7 @@ func (h *ClientHandler) CreateInstallation(w http.ResponseWriter, r *http.Reques
 		}
 		date = &parsed
 	}
-	job, err := h.jobs.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: "internet", Mode: req.Mode, TargetISPID: req.TargetISPID, TechnicianID: req.TargetTechnicianID, LocationID: req.LocationID, County: req.County, Town: req.Town, Village: req.Village, ServiceType: req.ServiceType, SpeedMbps: req.SpeedMbps, Description: req.Description, Budget: req.Budget, PreferredDate: date})
+	job, err := h.jobs.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: "internet", Mode: req.Mode, TargetISPID: req.TargetISPID, TechnicianID: req.TargetTechnicianID, LocationID: req.LocationID, County: req.County, Town: req.Town, Village: req.Village, ServiceType: req.ServiceType, SpeedMbps: req.SpeedMbps, Description: req.Description, PhotoURLs: req.PhotoURLs, Budget: req.Budget, PreferredDate: date})
 	if err != nil {
 		recordAudit(r, "installation.requested", "REQUEST", "service_request", "", err.Error(), false, map[string]interface{}{"county": req.County, "service_type": req.ServiceType})
 		respondWithError(w, http.StatusBadRequest, err.Error())
@@ -695,7 +868,7 @@ func (h *ClientHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	if requestType == "" {
 		requestType = "technician_service"
 	}
-	job, err := h.jobs.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: requestType, Mode: req.Mode, TargetISPID: req.TargetISPID, TechnicianID: req.TargetTechnicianID, LocationID: req.LocationID, County: req.County, Town: req.Town, Village: req.Village, ServiceType: req.ServiceType, SpeedMbps: req.SpeedMbps, Description: req.Description, Budget: req.Budget, PreferredDate: date})
+	job, err := h.jobs.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: requestType, Mode: req.Mode, TargetISPID: req.TargetISPID, TechnicianID: req.TargetTechnicianID, LocationID: req.LocationID, County: req.County, Town: req.Town, Village: req.Village, ServiceType: req.ServiceType, SpeedMbps: req.SpeedMbps, Description: req.Description, PhotoURLs: req.PhotoURLs, Budget: req.Budget, PreferredDate: date})
 	if err != nil {
 		recordAudit(r, "customer_request.created", "CREATE", "service_request", "", err.Error(), false, map[string]interface{}{"request_type": requestType})
 		respondWithError(w, 400, err.Error())

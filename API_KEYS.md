@@ -122,7 +122,7 @@ Every value below is read via `os.Getenv` / `getenv` in the Go code. "Client-saf
 | `JWT_SECRET` | HMAC-SHA256 signing key | `ispilolite-dev-secret` | **yes in production** | ❌ |
 | `JWT_ISSUER` | Token `iss` claim | `ispilolite` | no | ❌ |
 | `JWT_ACCESS_TTL` | Access token lifetime | `15m` | no | ❌ |
-| `JWT_REFRESH_TTL` | Refresh token lifetime | `168h` (7d) | no | ❌ |
+| `JWT_REFRESH_TTL` | Rotating refresh-token lifetime | `8760h` (1y) | no | ❌ |
 
 > `config/config.yaml` also has `jwt.secret: "your-super-secret-key"`, `jwt.issuer: "ispilolite"`, `jwt.expiry_hours: 72`. The runtime actually uses `JWT_SECRET` / `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` from the environment (`pkg/config/config.go`, `internal/services/auth/auth_service.go`). Rotate the YAML defaults before going live.
 
@@ -197,11 +197,14 @@ Local placeholders in `config/config.local.yaml`:
 |---|---|---|---|---|
 | `ADMIN_ALERT_PHONES` | Comma-separated admin SMS numbers | — | no | ❌ |
 | `NOTIFICATION_WEBHOOK_URL` | Push webhook for notification worker | — | worker: yes | ❌ |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud used for media uploads | — | uploads only | ✅ |
-| `CLOUDINARY_API_KEY` | Public Cloudinary API key returned in upload params | — | uploads only | ✅ |
-| `CLOUDINARY_API_SECRET` | Signs Cloudinary upload params | — | uploads only | ❌ |
-| `CLOUDINARY_FOLDER_PREFIX` | Public folder prefix for uploaded media | `ispilolite` | no | ✅ |
-| `CLOUDINARY_ALLOWED_HOSTS` | Extra Cloudinary delivery hostnames accepted in `*_urls` | `res.cloudinary.com` | no | ✅ |
+| `R2_ENDPOINT` | Cloudflare R2 S3 API endpoint | — | uploads: yes | ✅ |
+| `R2_ACCESS_KEY_ID` | R2 access-key ID used only by Go | — | uploads: yes | ❌ |
+| `R2_SECRET_ACCESS_KEY` | R2 secret used only for SigV4 | — | uploads: yes | ❌ |
+| `R2_BUCKET` | R2 media bucket | `ispilo-media` | uploads: yes | ✅ |
+| `R2_PUBLIC_BASE_URL` | Public/custom media delivery origin | `https://media.ispilo.co.ke` | uploads: yes | ✅ |
+| `R2_REGION` | SigV4 region | `auto` | no | ✅ |
+| `R2_FOLDER_PREFIX` | Object-key prefix | `ispilolite` | no | ✅ |
+| `R2_ALLOWED_HOSTS` | Additional accepted delivery hosts | `media.ispilo.co.ke` | no | ✅ |
 | `DOCUMENT_STORAGE_ROOT` | Quotation PDF storage root | — | no | ❌ |
 | `AUDIT_ARCHIVE_ROOT` | Audit export archive root | `storage/audit` | no | ❌ |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP tracing endpoint | — | no | ❌ |
@@ -225,7 +228,7 @@ CONFIG_PATH=config/config.yaml
 JWT_SECRET=change-me-to-a-64-char-random-string
 JWT_ISSUER=ispilolite
 JWT_ACCESS_TTL=15m
-JWT_REFRESH_TTL=168h
+JWT_REFRESH_TTL=8760h
 
 # --- Postgres (writer + reader) ---
 DATABASE_URL=postgres://user:pass@writer-host:5432/ispilolite?sslmode=require
@@ -250,12 +253,15 @@ TALKSASA_SENDER_ID=TALK-SASA
 RABBITMQ_URL=amqp://ispilo:pass@rabbitmq-host:5672/
 RABBITMQ_REQUIRED=true
 
-# --- Media storage (Cloudinary signed uploads) ---
-CLOUDINARY_CLOUD_NAME=your-cloud-name
-CLOUDINARY_API_KEY=your-public-api-key
-CLOUDINARY_API_SECRET=your-server-only-api-secret
-CLOUDINARY_FOLDER_PREFIX=ispilolite
-CLOUDINARY_ALLOWED_HOSTS=res.cloudinary.com
+# --- Media storage (Cloudflare R2 presigned PUT uploads) ---
+R2_ENDPOINT=https://account-id.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=your-r2-access-key-id
+R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+R2_BUCKET=ispilo-media
+R2_PUBLIC_BASE_URL=https://media.ispilo.co.ke
+R2_REGION=auto
+R2_FOLDER_PREFIX=ispilolite
+R2_ALLOWED_HOSTS=media.ispilo.co.ke
 
 # --- Misc ---
 ADMIN_ALERT_PHONES=+254712345678
@@ -338,9 +344,9 @@ class ApiResponse<T> {
 > - Auth endpoints (`/api/v1/auth/*`) are rate-limited to **5 requests per minute** per IP.
 > - Refresh tokens are single-use (**token rotation**); reusing a spent refresh token revokes all user sessions.
 
-Customers sign in with **phone + OTP**. Staff (ISP / technician / admin) sign in with **username + password**. Public registration is **customer-only** — the server forces `role = "customer"`.
+Every role signs in with **phone or username + password**. SMS OTP is reserved for registration verification and password recovery. Public registration accepts `customer`, `technician`, or `isp`.
 
-### 4.1 Register (customer only)
+### 4.1 Register
 
 `POST /api/v1/auth/register` — **no auth**
 
@@ -349,7 +355,10 @@ Request:
 {
   "phone": "+254712345678",
   "name": "John Doe",
-  "email": "john@example.com"
+  "email": "john@example.com",
+  "username": "john_doe",
+  "password": "SecurePass123",
+  "role": "customer"
 }
 ```
 
@@ -365,28 +374,30 @@ Response `201`:
 }
 ```
 
-### 4.2 Login / request OTP (customer)
+### 4.2 Login with phone and password
 
 `POST /api/v1/auth/login` — **no auth**
 
 Request:
 ```json
-{ "phone": "+254712345678" }
+{ "phone": "+254712345678", "password": "SecurePass123" }
 ```
 
 Response `200`:
 ```json
 {
   "success": true,
-  "message": "OTP sent to your phone",
-  "data": {
-    "user_id": "550e8400-e29b-41d4-a716-446655440000",
-    "expires_in": 300
-  }
+    "data": {
+      "access_token": "eyJhbGciOiJIUzI1NiIs...",
+      "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
+      "token_type": "Bearer",
+      "expires_in": 900,
+      "user": { "id": "550e8400-e29b-41d4-a716-446655440000", "role": "customer" }
+    }
 }
 ```
 
-### 4.3 Login (staff: ISP / technician / admin)
+### 4.3 Login with username and password
 
 `POST /api/v1/auth/login` — **no auth**
 
@@ -397,7 +408,7 @@ Request:
 
 Response `200`: token payload (see 4.4).
 
-### 4.4 Verify OTP → tokens
+### 4.4 Verify registration OTP → tokens
 
 `POST /api/v1/auth/verify-otp` — **no auth**
 
@@ -444,6 +455,7 @@ Response `200`:
   "success": true,
   "data": {
     "access_token": "eyJhbGciOiJIUzI1NiIs...",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
     "token_type": "Bearer",
     "expires_in": 900
   }

@@ -11,6 +11,7 @@ import (
 	"ispilolite/api/dto"
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository/postgres"
+	"ispilolite/internal/validation"
 )
 
 type speedStatsReader interface {
@@ -152,6 +153,12 @@ func (h *InstallationOperationsHandler) SaveProof(w http.ResponseWriter, r *http
 		respondWithError(w, http.StatusBadRequest, "photo_urls, device_serial and checklist are required")
 		return
 	}
+	photos, err := validation.MediaURLs(item.PhotoURLs, 10)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item.PhotoURLs = photos
 	if err := h.repo.SaveProof(&item); err != nil {
 		if err == sql.ErrNoRows {
 			respondWithError(w, http.StatusForbidden, "job is not assigned to this technician")

@@ -3,11 +3,13 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
+
 	"github.com/google/uuid"
 	"ispilolite/internal/models"
 	"ispilolite/pkg/database"
-	"strings"
-	"time"
 )
 
 type ispRepo struct {
@@ -51,12 +53,70 @@ func (r *ispRepo) GetISPs() ([]*models.ISP, error) {
 }
 
 func (r *ispRepo) GetISPByID(ispID string) (*models.ISP, error) {
-	query := `SELECT id, name, description, logo_url, customer_care_number, technicians_available, avg_response_time, avg_price FROM isps WHERE id = $1`
+	query := `
+		SELECT 
+			i.id, 
+			i.name, 
+			COALESCE(NULLIF(i.display_name, ''), NULLIF(u.display_name, ''), i.name),
+			COALESCE(i.description, ''), 
+			COALESCE(NULLIF(i.logo_url,''), NULLIF(u.avatar_url,''), ''), 
+			COALESCE(NULLIF(i.avatar_url,''), NULLIF(u.avatar_url,''), ''), 
+			COALESCE(NULLIF(i.customer_care_number, ''), NULLIF(u.phone, ''), ''), 
+			COALESCE(i.technicians_available, 0), 
+			COALESCE(i.avg_response_time, 0), 
+			COALESCE(i.avg_price, 0),
+			COALESCE(i.rating, u.rating, 0),
+			COALESCE(i.review_count, u.total_ratings, 0),
+			COALESCE(NULLIF(i.county,''), NULLIF(u.county,''), ''),
+			COALESCE(i.sub_county, ''),
+			COALESCE(i.village, ''),
+			COALESCE(NULLIF(i.identity_status, ''), NULLIF(u.identity_status, ''), 'unverified'),
+			COALESCE(i.verified_name, ''),
+			i.is_active
+		FROM isps i
+		LEFT JOIN users u ON u.id = i.id
+		WHERE i.id = $1`
 	var isp models.ISP
-	err := r.dbReader.QueryRow(query, ispID).Scan(&isp.ID, &isp.Name, &isp.Description, &isp.LogoURL, &isp.CustomerCareNumber, &isp.TechniciansAvailable, &isp.AvgResponseTime, &isp.AvgPrice)
+	err := r.dbReader.QueryRow(query, ispID).Scan(
+		&isp.ID, &isp.Name, &isp.DisplayName,
+		&isp.Description, &isp.LogoURL, &isp.AvatarURL,
+		&isp.CustomerCareNumber, &isp.TechniciansAvailable,
+		&isp.AvgResponseTime, &isp.AvgPrice,
+		&isp.Rating, &isp.ReviewCount,
+		&isp.County, &isp.SubCounty, &isp.Village,
+		&isp.IdentityStatus, &isp.VerifiedName,
+		&isp.IsActive,
+	)
 	if err != nil {
 		return nil, err
 	}
+
+	coverageMap := make(map[string]bool)
+	if strings.TrimSpace(isp.County) != "" {
+		coverageMap[strings.TrimSpace(isp.County)] = true
+	}
+	covRows, covErr := r.dbReader.Query(`
+		SELECT DISTINCT l.county FROM isp_coverage_locations c JOIN locations l ON l.id = c.location_id WHERE c.isp_id = $1 AND l.county <> ''
+		UNION
+		SELECT DISTINCT county FROM isp_coverage_polygons WHERE isp_id = $1 AND active = true AND county <> ''
+		UNION
+		SELECT DISTINCT county FROM isp_serviceability WHERE isp_id = $1 AND active = true AND county <> ''
+	`, ispID)
+	if covErr == nil {
+		defer covRows.Close()
+		for covRows.Next() {
+			var c string
+			if covRows.Scan(&c) == nil && strings.TrimSpace(c) != "" {
+				coverageMap[strings.TrimSpace(c)] = true
+			}
+		}
+	}
+
+	isp.Coverage = make([]string, 0, len(coverageMap))
+	for c := range coverageMap {
+		isp.Coverage = append(isp.Coverage, c)
+	}
+	sort.Strings(isp.Coverage)
 
 	packages, err := r.GetISPPackages(ispID)
 	if err != nil {
@@ -93,8 +153,20 @@ func (r *ispRepo) CreateISP(isp *models.ISP) error {
 }
 
 func (r *ispRepo) UpdateISP(isp *models.ISP) error {
-	_, err := r.dbWriter.Exec(`INSERT INTO isps(id,name,description,avatar_url,logo_url,customer_care_number,avg_response_time,avg_price,created_at,updated_at)
-		VALUES($7,$1,$2,$3,$3,$4,$5,$6,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,avatar_url=EXCLUDED.avatar_url,logo_url=EXCLUDED.logo_url,customer_care_number=EXCLUDED.customer_care_number,avg_response_time=EXCLUDED.avg_response_time,avg_price=EXCLUDED.avg_price,updated_at=now()`, isp.Name, isp.Description, isp.LogoURL, isp.CustomerCareNumber, isp.AvgResponseTime, isp.AvgPrice, isp.ID)
+	_, err := r.dbWriter.Exec(`INSERT INTO isps(id,name,description,avatar_url,logo_url,customer_care_number,avg_response_time,avg_price,county,sub_county,created_at,updated_at)
+		VALUES($7,$1,$2,$3,$3,$4,$5,$6,COALESCE($8,''),COALESCE($9,''),now(),now())
+		ON CONFLICT(id) DO UPDATE SET
+			name=EXCLUDED.name,
+			description=EXCLUDED.description,
+			avatar_url=EXCLUDED.avatar_url,
+			logo_url=EXCLUDED.logo_url,
+			customer_care_number=EXCLUDED.customer_care_number,
+			avg_response_time=EXCLUDED.avg_response_time,
+			avg_price=EXCLUDED.avg_price,
+			county=CASE WHEN EXCLUDED.county <> '' THEN EXCLUDED.county ELSE isps.county END,
+			sub_county=CASE WHEN EXCLUDED.sub_county <> '' THEN EXCLUDED.sub_county ELSE isps.sub_county END,
+			updated_at=now()`,
+		isp.Name, isp.Description, isp.LogoURL, isp.CustomerCareNumber, isp.AvgResponseTime, isp.AvgPrice, isp.ID, isp.County, isp.SubCounty)
 	return err
 }
 
@@ -104,11 +176,14 @@ func (r *ispRepo) CreatePackage(pkg *models.ISPPackage) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO isp_packages (id,isp_id,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,is_active,description,version,max_subscriptions,tier,overage_price,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,$13,1,NULLIF($14,0),$15,$16,now())`, pkg.ID, pkg.ISP_ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
+	if pkg.SpeedUnitID == "" {
+		_ = tx.QueryRow(`SELECT id::text FROM package_units WHERE symbol='Mbps' LIMIT 1`).Scan(&pkg.SpeedUnitID)
+	}
+	_, err = tx.Exec(`INSERT INTO isp_packages (id,isp_id,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,is_active,description,version,max_subscriptions,tier,overage_price,updated_at) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7,$8,$9,NULLIF($10,0),NULLIF($11,'')::uuid,$12,$13,1,NULLIF($14,0),$15,$16,now())`, pkg.ID, pkg.ISP_ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions,tier,overage_price) VALUES(gen_random_uuid(),$1,1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,0),NULLIF($10,'')::uuid,$11,NULLIF($12,0),$13,$14)`, pkg.ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
+	_, err = tx.Exec(`INSERT INTO isp_package_versions(id,package_id,version,name,category,speed_value,speed_unit_id,base_price,billing_cycle,capacity_type,capacity_value,capacity_unit_id,description,max_subscriptions,tier,overage_price) VALUES(gen_random_uuid(),$1,1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7,$8,NULLIF($9,0),NULLIF($10,'')::uuid,$11,NULLIF($12,0),$13,$14)`, pkg.ID, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.Description, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice)
 	if err != nil {
 		return err
 	}
@@ -121,6 +196,9 @@ func (r *ispRepo) UpdatePackage(pkg *models.ISPPackage) error {
 		return err
 	}
 	defer tx.Rollback()
+	if pkg.SpeedUnitID == "" {
+		_ = tx.QueryRow(`SELECT id::text FROM package_units WHERE symbol='Mbps' LIMIT 1`).Scan(&pkg.SpeedUnitID)
+	}
 	var version int
 	err = tx.QueryRow(`SELECT version+1 FROM isp_packages WHERE id=$1 AND isp_id=$2 AND archived_at IS NULL FOR UPDATE`, pkg.ID, pkg.ISP_ID).Scan(&version)
 	if err != nil {
@@ -133,7 +211,7 @@ func (r *ispRepo) UpdatePackage(pkg *models.ISPPackage) error {
 	if activeSubscriptions > 0 {
 		return fmt.Errorf("package has active subscriptions and cannot be changed")
 	}
-	_, err = tx.Exec(`UPDATE isp_packages SET name=$1,category=$2,speed_value=$3,speed_unit_id=$4,base_price=$5,billing_cycle=$6,capacity_type=$7,capacity_value=NULLIF($8,0),capacity_unit_id=NULLIF($9,'')::uuid,is_active=$10,description=$11,version=$12,max_subscriptions=NULLIF($13,0),tier=$14,overage_price=$15,updated_at=now() WHERE id=$16 AND isp_id=$17`, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, version, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice, pkg.ID, pkg.ISP_ID)
+	_, err = tx.Exec(`UPDATE isp_packages SET name=$1,category=$2,speed_value=$3,speed_unit_id=NULLIF($4,'')::uuid,base_price=$5,billing_cycle=$6,capacity_type=$7,capacity_value=NULLIF($8,0),capacity_unit_id=NULLIF($9,'')::uuid,is_active=$10,description=$11,version=$12,max_subscriptions=NULLIF($13,0),tier=$14,overage_price=$15,updated_at=now() WHERE id=$16 AND isp_id=$17`, pkg.Name, pkg.Category, pkg.SpeedValue, pkg.SpeedUnitID, pkg.BasePrice, pkg.BillingCycle, pkg.CapacityType, pkg.CapacityValue, pkg.CapacityUnitID, pkg.IsActive, pkg.Description, version, pkg.MaxSubscriptions, pkg.Tier, pkg.OveragePrice, pkg.ID, pkg.ISP_ID)
 	if err != nil {
 		return err
 	}
@@ -300,6 +378,12 @@ func (r *ispRepo) ListPackageUnits(dimension string) ([]*models.PackageUnit, err
 }
 func (r *ispRepo) ValidatePackageUnits(speedUnitID, capacityUnitID, capacityType string) error {
 	var dimension string
+	if speedUnitID == "" {
+		if err := r.dbReader.QueryRow(`SELECT dimension FROM package_units WHERE symbol='Mbps' LIMIT 1`).Scan(&dimension); err != nil {
+			return nil
+		}
+		return nil
+	}
 	if err := r.dbReader.QueryRow(`SELECT dimension FROM package_units WHERE id=$1`, speedUnitID).Scan(&dimension); err != nil {
 		return fmt.Errorf("speed unit not found: %w", err)
 	}
@@ -516,4 +600,28 @@ func (r *ispRepo) RecordPackageUsage(event *models.PackageUsageEvent) (*models.P
 		}
 	}
 	return nil, sql.ErrNoRows
+}
+
+func (r *ispRepo) SetWorkingCounties(ispID string, counties []string) error {
+	tx, err := r.dbWriter.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, c := range counties {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		_, err := tx.Exec(`
+			INSERT INTO isp_serviceability (id, isp_id, county, town, technology, status, active)
+			VALUES (gen_random_uuid(), $1, $2, '', 'fibre', 'serviceable', true)
+			ON CONFLICT (isp_id, COALESCE(location_id::text, ''), lower(county), lower(town), lower(estate), lower(building))
+			DO UPDATE SET active = true, updated_at = now()
+		`, ispID, c)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

@@ -39,7 +39,7 @@ func (s *Store) SaveQuotation(q *models.Quotation) (*models.Document, error) {
 }
 
 // quotationPDF creates a dependency-free, multi-page PDF. It intentionally
-// does not fetch CompanyLogoURL: remote media is client-uploaded to Cloudinary
+// does not fetch CompanyLogoURL: remote media is client-uploaded to R2
 // and the API avoids server-side URL fetching/SSRF. The URL remains on the
 // quotation record and can be rendered by the client.
 func quotationPDF(q *models.Quotation) []byte {

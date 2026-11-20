@@ -141,8 +141,8 @@ func (r *FlagRepository) CancelFlag(ctx context.Context, id, reporterID string) 
 
 // ReviewFlag applies an admin decision atomically: the report status, the
 // feedback, and (when approved) the account action. Suspending sets the user
-// status to 'suspended', which blocks both password and OTP login and, because
-// phones are unique, prevents re-registration with the same number.
+// status to 'suspended', which blocks password login and, because phones are
+// unique, prevents re-registration with the same number.
 func (r *FlagRepository) ReviewFlag(ctx context.Context, id, adminID, status, feedback, action string) error {
 	tx, err := r.writer.BeginTx(ctx, nil)
 	if err != nil {

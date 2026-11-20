@@ -125,15 +125,15 @@ type JobPairingQRResponse struct {
 }
 
 type ConfirmJobPairingResponse struct {
-	JobID          string     `json:"job_id"`
-	PairingID      string     `json:"pairing_id"`
-	Status         string     `json:"status"`
-	ConfirmedAt    time.Time  `json:"confirmed_at"`
-	JobStatus      string     `json:"job_status"`
-	EscrowReleased bool       `json:"escrow_released"`
-	ReleasedAmount float64    `json:"released_amount,omitempty"`
-	Currency       string     `json:"currency,omitempty"`
-	Message        string     `json:"message"`
+	JobID          string    `json:"job_id"`
+	PairingID      string    `json:"pairing_id"`
+	Status         string    `json:"status"`
+	ConfirmedAt    time.Time `json:"confirmed_at"`
+	JobStatus      string    `json:"job_status"`
+	EscrowReleased bool      `json:"escrow_released"`
+	ReleasedAmount float64   `json:"released_amount,omitempty"`
+	Currency       string    `json:"currency,omitempty"`
+	Message        string    `json:"message"`
 }
 
 type JobPairingStatusResponse struct {
@@ -149,4 +149,3 @@ type JobPairingStatusResponse struct {
 	Amount         float64    `json:"amount"`
 	Currency       string     `json:"currency"`
 }
-

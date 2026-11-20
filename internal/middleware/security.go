@@ -13,33 +13,30 @@ import (
 // In production, allowedOrigins should be your Flutter web domain(s), not "*".
 // When allowedOrigins is empty, CORS is effectively disabled (no headers set).
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
-	allowOrigin := ""
-	if len(allowedOrigins) > 0 {
-		allowOrigin = strings.Join(allowedOrigins, ",")
-	}
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if allowOrigin != "" {
-				origin := r.Header.Get("Origin")
-				if origin != "" {
-					// Simple match: reflect the request origin if it's in our list.
-					allowed := false
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				allowed := false
+				if len(allowedOrigins) == 0 {
+					// Open for development/all origins when not explicitly constrained
+					allowed = true
+				} else {
 					for _, o := range allowedOrigins {
-						if o == "*" || o == origin {
+						if o == "*" || o == origin || strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1") {
 							allowed = true
 							break
 						}
 					}
-					if allowed {
-						w.Header().Set("Access-Control-Allow-Origin", origin)
-					}
-				} else {
-					w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 				}
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Idempotency-Key")
-				w.Header().Set("Access-Control-Max-Age", "86400")
+
+				if allowed {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Idempotency-Key, X-Request-Id, Origin, X-Requested-With")
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Access-Control-Max-Age", "86400")
+				}
 			}
 
 			if r.Method == http.MethodOptions {

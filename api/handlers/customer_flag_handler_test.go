@@ -80,7 +80,7 @@ func TestFlagCreateAcceptsValidReport(t *testing.T) {
 	h := newCustomerFlagHandlerWithStore(store)
 	body := `{"reported_user_id":"user-2","category":"harassment",
 		"description":"Sent repeated abusive messages after the job was cancelled.",
-		"image_urls":["https://res.cloudinary.com/demo/image/upload/a.png"]}`
+		"image_urls":["https://media.ispilo.co.ke/flags/a.png"]}`
 	w := httptest.NewRecorder()
 	h.Create(w, flagRequest(t, http.MethodPost, "/api/v1/flags", body))
 
@@ -111,7 +111,7 @@ func TestFlagCreateValidation(t *testing.T) {
 		{"self report", `{"reported_user_id":"reporter-1","category":"fraud","description":"Reporting myself for testing."}`},
 		{"no subject", `{"category":"fraud","description":"No user and no phone supplied here."}`},
 		{"bad phone", `{"reported_phone":"abc","category":"fraud","description":"Phone number is not valid here."}`},
-		{"too many images", `{"reported_user_id":"user-2","category":"fraud","description":"Too many screenshots attached to this report.","image_urls":["https://res.cloudinary.com/demo/a.png","https://res.cloudinary.com/demo/b.png","https://res.cloudinary.com/demo/c.png","https://res.cloudinary.com/demo/d.png"]}`},
+		{"too many images", `{"reported_user_id":"user-2","category":"fraud","description":"Too many screenshots attached to this report.","image_urls":["https://media.ispilo.co.ke/flags/a.png","https://media.ispilo.co.ke/flags/b.png","https://media.ispilo.co.ke/flags/c.png","https://media.ispilo.co.ke/flags/d.png"]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

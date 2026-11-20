@@ -369,9 +369,9 @@ Report payload:
   "category": "harassment",
   "description": "What happened, when, and where (10-4000 characters).",
   "image_urls": [
-    "https://res.cloudinary.com/<cloud>/image/upload/evidence-1.jpg",
-    "https://res.cloudinary.com/<cloud>/image/upload/evidence-2.jpg",
-    "https://res.cloudinary.com/<cloud>/image/upload/evidence-3.jpg"
+    "https://media.ispilo.co.ke/<cloud>/image/upload/evidence-1.jpg",
+    "https://media.ispilo.co.ke/<cloud>/image/upload/evidence-2.jpg",
+    "https://media.ispilo.co.ke/<cloud>/image/upload/evidence-3.jpg"
   ]
 }
 ```
@@ -380,7 +380,7 @@ Report payload:
   as reported only; it never creates or impersonates an account.
 - `category` is one of `fraud`, `harassment`, `impersonation`, `spam`,
   `payment_scam`, `fake_listing`, `abusive_content`, `other`.
-- `image_urls` accepts at most 3 Cloudinary delivery URLs, using the same
+- `image_urls` accepts at most 3 Cloudflare R2 delivery URLs, using the same
   allowlist as every other media field.
 - Limits: 5 reports per reporter per 24 hours, and one open report per reported
   account (duplicate open reports return `409`).
@@ -445,8 +445,8 @@ Prerequisites: The account phone number must be verified (`users.is_verified == 
 Payload for `POST /identity/verify` or `POST /technicians/identity-verification`:
 ```json
 {
-  "id_photo_url": "https://res.cloudinary.com/.../id-front.jpg",
-  "id_photo_back_url": "https://res.cloudinary.com/.../id-back.jpg",
+  "id_photo_url": "https://media.ispilo.co.ke/.../id-front.jpg",
+  "id_photo_back_url": "https://media.ispilo.co.ke/.../id-back.jpg",
   "document_type": "national_id",
   "id_number": "12345678",
   "notes": "National ID submission"
@@ -467,7 +467,7 @@ Payload for `POST /identity/verify` or `POST /technicians/identity-verification`
     "verification_badge": "id_verified",
     "badge_label": "ID verified",
     "verified_name": "John Kipkorir Tech",
-    "id_photo_url": "https://res.cloudinary.com/.../id-front.jpg",
+    "id_photo_url": "https://media.ispilo.co.ke/.../id-front.jpg",
     "document_type": "national_id"
   }
 }
@@ -945,7 +945,7 @@ Returns the completion percentage, lists what has been completed, and provides a
       "display_name": "PATCH /api/v1/my/display-name (set public moniker e.g. 'Leshark')",
       "fill_missing": "PATCH /api/v1/my/profile/fill-missing (submit all unfulfilled fields in one payload)",
       "identity_verify": "POST /api/v1/identity/verify (id_photo_url, id_photo_back_url, id_number, document_type)",
-      "media_signature": "POST /api/v1/media/upload-signature (for direct Cloudinary client-side upload)",
+      "media_signature": "POST /api/v1/media/upload-signature (for direct Cloudflare R2 client-side upload)",
       "media_upload": "POST /api/v1/media/upload (multipart form: kind=profile, portfolio, identity_document, isp_logo)",
       "packages": "POST /api/v1/my/packages (create ISP packages)",
       "portfolio_profile": "PUT /api/v1/my/portfolio/profile (technician bio, hourly rate, skills, availability)",
@@ -980,8 +980,8 @@ PATCH /my/profile/complete
     "lat": -1.264,
     "lng": 36.804
   },
-  "id_photo_url": "https://res.cloudinary.com/demo/image/upload/id_front.jpg",
-  "id_photo_back_url": "https://res.cloudinary.com/demo/image/upload/id_back.jpg",
+  "id_photo_url": "https://media.ispilo.co.ke/demo/image/upload/id_front.jpg",
+  "id_photo_back_url": "https://media.ispilo.co.ke/demo/image/upload/id_back.jpg",
   "id_number": "12345678",
   "document_type": "national_id"
 }
@@ -1019,7 +1019,7 @@ Returns the updated user profile and fresh completion report:
 | Profile Avatar | `POST /media/upload?kind=profile` | JPEG, PNG, WEBP | User avatar |
 | ISP Logo | `POST /media/upload?kind=isp_logo` | JPEG, PNG, WEBP | Company logo for marketplace cards |
 | Work Portfolio | `POST /media/upload?kind=portfolio` | JPEG, PNG, WEBP | Past installation photos |
-| Cloudinary Signature | `POST /media/upload-signature` | JSON | Direct browser-to-cloud signed upload |
+| Cloudflare R2 Signature | `POST /media/upload-signature` | JSON | Direct browser-to-cloud signed upload |
 
 ## User follows (customer, technician, ISP)
 
@@ -1092,11 +1092,11 @@ Facebook, and X share links, package tables, and per-ISP profile links. Each
 view stores only the page type, area key, referrer origin, and timestamp in
 `coverage_page_views`; IP addresses and user agents are not stored.
 
-## Media uploads (Cloudinary signed uploads)
+## Media uploads (Cloudflare R2 signed uploads)
 
 The API does not receive image bytes. It issues a signed upload request scoped
 to the authenticated user's folder; the client uploads the file directly to
-Cloudinary from Flutter or browser JavaScript, then sends the returned
+Cloudflare R2 from Flutter or browser JavaScript, then sends the returned
 `secure_url` in the existing `photo_urls`, `media_urls`, `attachments`, or
 similar fields.
 
@@ -1115,7 +1115,7 @@ Content-Type: application/json
 ```
 
 `file_size` and `content_type` are optional checks. The response includes the
-Cloudinary endpoint and the exact multipart fields to submit with the file:
+Cloudflare R2 endpoint and the exact multipart fields to submit with the file:
 
 ```json
 {
@@ -1123,7 +1123,7 @@ Cloudinary endpoint and the exact multipart fields to submit with the file:
   "data": {
     "kind": "installation_proof",
     "cloud_name": "your-cloud-name",
-    "upload_url": "https://api.cloudinary.com/v1_1/your-cloud-name/image/upload",
+    "upload_url": "https://<account-id>.r2.cloudflarestorage.com/v1_1/your-cloud-name/image/upload",
     "folder": "ispilolite/installation-proofs/550e8400-e29b-41d4-a716-446655440000",
     "timestamp": 1770000000,
     "expires_at": 1770000600,
@@ -1133,7 +1133,7 @@ Cloudinary endpoint and the exact multipart fields to submit with the file:
       "api_key": "your-public-api-key",
       "allowed_formats": "jpg,jpeg,png,webp,heic,heif",
       "folder": "ispilolite/installation-proofs/550e8400-e29b-41d4-a716-446655440000",
-      "signature": "cloudinary-signature",
+      "signature": "r2-signature",
       "timestamp": "1770000000"
     }
   }
@@ -1141,10 +1141,10 @@ Cloudinary endpoint and the exact multipart fields to submit with the file:
 ```
 
 Submit every `upload_params` entry as a multipart field, add the file as
-`file`, and POST to `upload_url`. The response is a standard Cloudinary upload
+`file`, and POST to `upload_url`. The response is a standard Cloudflare R2 upload
 object; store its `secure_url`, never a temporary local path.
 
-| `kind` | Allowed roles | Max file size | Cloudinary folder |
+| `kind` | Allowed roles | Max file size | Cloudflare R2 folder |
 |---|---|---|---|
 | `profile` | customer, technician, ISP, admin | 5 MB | `profiles/<user-id>` |
 | `installation_proof` | technician, ISP, admin | 15 MB | `installation-proofs/<user-id>` |
@@ -1158,8 +1158,8 @@ Only JPEG, PNG, WebP, HEIC, and HEIF images are accepted. The folder is chosen
 by the server from `kind` and the authenticated user ID; clients cannot pick
 an arbitrary folder. `expires_at` is ten minutes after signing; it is advisory,
 so the client should upload promptly. The API secret is never returned. The
-upload endpoint returns `503` until `CLOUDINARY_CLOUD_NAME`,
-`CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` are configured.
+upload endpoint returns `503` until `R2_ENDPOINT`,
+`R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` are configured.
 
 ## Speed-test history and ISP attribution
 

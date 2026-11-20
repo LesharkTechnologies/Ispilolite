@@ -41,6 +41,13 @@ func (r *userRepo) RefreshSessionActive(sessionID, tokenHash string) (bool, erro
 	}
 	return ok, err
 }
+
+// RevokeRefreshSession invalidates one rotated refresh credential without
+// signing the user out on their other devices.
+func (r *userRepo) RevokeRefreshSession(sessionID string) error {
+	_, err := r.dbWriter.Exec(`UPDATE auth_sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL`, sessionID)
+	return err
+}
 func (r *userRepo) SanitizeAndDeleteUser(userID string) error {
 	// In accordance with Kenya Data Protection Act 2019 (KDPA) Section 39 & 40,
 	// telecommunications regulations, and financial audit laws:

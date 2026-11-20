@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -26,200 +27,159 @@ func mediaRequest(t *testing.T, body, userID, role string) *http.Request {
 	return req.WithContext(ctx)
 }
 
-func TestMediaSignatureReturnsSignedCloudinaryParams(t *testing.T) {
-	handler := newMediaHandler("demo-cloud", "public-key", "secret", "ispilolite")
-	handler.now = func() time.Time { return time.Unix(1700000000, 0) }
-	req := mediaRequest(t, `{"kind":"installation_proof","file_size":2048,"content_type":"image/jpeg"}`, "user-123", "technician")
+func testR2Handler() *MediaHandler {
+	h := newMediaHandler(
+		"https://account.r2.cloudflarestorage.com", "r2-access", "r2-secret",
+		"ispilo-media", "https://media.ispilo.co.ke", "auto", "ispilolite",
+	)
+	h.now = func() time.Time { return time.Unix(1700000000, 0).UTC() }
+	return h
+}
+
+func TestMediaSignatureReturnsR2PresignedPut(t *testing.T) {
+	h := testR2Handler()
+	req := mediaRequest(t, `{"kind":"installation_proof","file_name":"proof.jpg","file_size":2048,"content_type":"image/jpeg"}`, "user-123", "technician")
 	rec := httptest.NewRecorder()
-
-	handler.Signature(rec, req)
-
+	h.Signature(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Kind           string            `json:"kind"`
-			CloudName      string            `json:"cloud_name"`
-			UploadURL      string            `json:"upload_url"`
-			Folder         string            `json:"folder"`
-			Timestamp      int64             `json:"timestamp"`
-			ExpiresAt      int64             `json:"expires_at"`
-			MaxFileSize    int64             `json:"max_file_size"`
-			AllowedFormats []string          `json:"allowed_formats"`
-			UploadParams   map[string]string `json:"upload_params"`
+			Kind        string            `json:"kind"`
+			Method      string            `json:"method"`
+			UploadURL   string            `json:"upload_url"`
+			PublicURL   string            `json:"public_url"`
+			ObjectKey   string            `json:"object_key"`
+			ExpiresAt   int64             `json:"expires_at"`
+			MaxFileSize int64             `json:"max_file_size"`
+			Headers     map[string]string `json:"headers"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.Success {
-		t.Fatal("success = false")
+	if !response.Success || response.Data.Method != http.MethodPut || response.Data.Kind != "installation_proof" {
+		t.Fatalf("unexpected response: %+v", response)
 	}
-	if response.Data.Kind != "installation_proof" || response.Data.CloudName != "demo-cloud" {
-		t.Fatalf("unexpected data: %+v", response.Data)
+	if !strings.HasPrefix(response.Data.ObjectKey, "ispilolite/installation-proofs/user-123/2023/11/") || !strings.HasSuffix(response.Data.ObjectKey, ".jpg") {
+		t.Fatalf("object_key=%q", response.Data.ObjectKey)
 	}
-	if response.Data.Folder != "ispilolite/installation-proofs/user-123" {
-		t.Fatalf("folder = %q", response.Data.Folder)
+	if response.Data.PublicURL != "https://media.ispilo.co.ke/"+response.Data.ObjectKey {
+		t.Fatalf("public_url=%q", response.Data.PublicURL)
 	}
-	if response.Data.UploadURL != "https://api.cloudinary.com/v1_1/demo-cloud/image/upload" {
-		t.Fatalf("upload_url = %q", response.Data.UploadURL)
+	u, err := url.Parse(response.Data.UploadURL)
+	if err != nil || u.Scheme != "https" || u.Host != "account.r2.cloudflarestorage.com" {
+		t.Fatalf("upload_url=%q err=%v", response.Data.UploadURL, err)
 	}
-	if response.Data.Timestamp != 1700000000 || response.Data.ExpiresAt != 1700000600 {
-		t.Fatalf("timestamps = %d %d", response.Data.Timestamp, response.Data.ExpiresAt)
+	if u.Query().Get("X-Amz-Algorithm") != "AWS4-HMAC-SHA256" || u.Query().Get("X-Amz-Signature") == "" || u.Query().Get("X-Amz-Expires") != "600" {
+		t.Fatalf("presign query=%v", u.Query())
 	}
-	if response.Data.MaxFileSize != mediaMaxProof {
-		t.Fatalf("max_file_size = %d", response.Data.MaxFileSize)
+	if strings.Contains(rec.Body.String(), "r2-secret") || strings.Contains(rec.Body.String(), "r2-access") {
+		t.Fatal("response leaked R2 credentials")
 	}
-	if got := response.Data.UploadParams["signature"]; got != "91bc9413ef03bf627ced6bd2cf544b94a759a574" {
-		t.Fatalf("signature = %q", got)
-	}
-	if response.Data.UploadParams["api_key"] != "public-key" || response.Data.UploadParams["folder"] != response.Data.Folder {
-		t.Fatalf("unexpected upload params: %+v", response.Data.UploadParams)
-	}
-	if strings.Contains(rec.Body.String(), "secret") {
-		t.Fatal("response leaked the Cloudinary API secret")
+	if response.Data.ExpiresAt != 1700000600 || response.Data.MaxFileSize != mediaMaxProof || response.Data.Headers["Content-Type"] != "image/jpeg" {
+		t.Fatalf("metadata=%+v", response.Data)
 	}
 }
 
-func TestMediaSignatureRequiresConfigurationAndAuth(t *testing.T) {
-	unconfigured := newMediaHandler("", "", "", "")
+func TestMediaSignatureRequiresR2ConfigurationAndAuth(t *testing.T) {
+	unconfigured := newMediaHandler("", "", "", "", "", "", "")
 	rec := httptest.NewRecorder()
-	unconfigured.Signature(rec, mediaRequest(t, `{"kind":"profile"}`, "user-1", "customer"))
+	unconfigured.Signature(rec, mediaRequest(t, `{"kind":"profile","file_name":"a.jpg","content_type":"image/jpeg"}`, "user-1", "customer"))
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("unconfigured status = %d", rec.Code)
+		t.Fatalf("unconfigured status=%d", rec.Code)
 	}
-
-	handler := newMediaHandler("demo-cloud", "public-key", "secret", "")
+	h := testR2Handler()
 	rec = httptest.NewRecorder()
-	handler.Signature(rec, mediaRequest(t, `{"kind":"profile"}`, "", ""))
+	h.Signature(rec, mediaRequest(t, `{"kind":"profile","file_name":"a.jpg","content_type":"image/jpeg"}`, "", ""))
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status = %d", rec.Code)
+		t.Fatalf("unauthenticated status=%d", rec.Code)
 	}
 }
 
-func TestMediaSignatureEnforcesKindRoles(t *testing.T) {
-	handler := newMediaHandler("demo-cloud", "public-key", "secret", "")
+func TestMediaKindsEnforceRolesAndLimits(t *testing.T) {
+	h := testR2Handler()
 	tests := []struct {
-		kind   string
-		role   string
-		status int
+		kind, role string
+		status     int
 	}{
-		{"installation_proof", "technician", http.StatusOK},
-		{"installation_proof", "customer", http.StatusForbidden},
-		{"promotion", "isp", http.StatusOK},
-		{"promotion", "technician", http.StatusForbidden},
-		{"profile", "customer", http.StatusOK},
-		{"review", "admin", http.StatusOK},
-		{"chat", "isp", http.StatusOK},
+		{"installation_proof", "technician", 200}, {"installation_proof", "customer", 403},
+		{"job_request", "customer", 200}, {"billing_logo", "isp", 200},
+		{"billing_logo", "customer", 403}, {"profile", "customer", 200},
+		{"portfolio", "technician", 200}, {"document", "customer", 200},
 	}
 	for _, test := range tests {
 		rec := httptest.NewRecorder()
-		handler.Signature(rec, mediaRequest(t, `{"kind":"`+test.kind+`"}`, "user-1", test.role))
+		body := `{"kind":"` + test.kind + `","file_name":"a.jpg","file_size":100,"content_type":"image/jpeg"}`
+		h.Signature(rec, mediaRequest(t, body, "user-1", test.role))
 		if rec.Code != test.status {
-			t.Fatalf("%s as %s = %d, want %d: %s", test.kind, test.role, rec.Code, test.status, rec.Body.String())
+			t.Fatalf("%s/%s=%d want=%d body=%s", test.kind, test.role, rec.Code, test.status, rec.Body.String())
 		}
 	}
 }
 
-func TestMediaSignatureRejectsInvalidRequests(t *testing.T) {
-	handler := newMediaHandler("demo-cloud", "public-key", "secret", "")
+func TestMediaSignatureRejectsInvalidInput(t *testing.T) {
+	h := testR2Handler()
 	tests := []struct {
-		name   string
-		body   string
-		role   string
-		status int
+		body, role string
+		status     int
 	}{
-		{"unknown kind", `{"kind":"executable"}`, "technician", http.StatusBadRequest},
-		{"negative size", `{"kind":"profile","file_size":-1}`, "customer", http.StatusBadRequest},
-		{"too large", `{"kind":"installation_proof","file_size":16777216}`, "technician", http.StatusRequestEntityTooLarge},
-		{"unsupported type", `{"kind":"profile","content_type":"application/pdf"}`, "customer", http.StatusBadRequest},
-		{"invalid json", `{"kind":`, "customer", http.StatusBadRequest},
+		{`{"kind":"executable","file_name":"a.jpg","content_type":"image/jpeg"}`, "technician", 400},
+		{`{"kind":"profile","file_name":"a.jpg","file_size":-1,"content_type":"image/jpeg"}`, "customer", 413},
+		{`{"kind":"installation_proof","file_name":"a.jpg","file_size":16777216,"content_type":"image/jpeg"}`, "technician", 413},
+		{`{"kind":"profile","file_name":"a.pdf","content_type":"application/pdf"}`, "customer", 400},
+		{`{"kind":`, "customer", 400},
 	}
 	for _, test := range tests {
 		rec := httptest.NewRecorder()
-		handler.Signature(rec, mediaRequest(t, test.body, "user-1", test.role))
+		h.Signature(rec, mediaRequest(t, test.body, "user-1", test.role))
 		if rec.Code != test.status {
-			t.Fatalf("%s = %d, want %d: %s", test.name, rec.Code, test.status, rec.Body.String())
+			t.Fatalf("body=%s status=%d want=%d response=%s", test.body, rec.Code, test.status, rec.Body.String())
 		}
 	}
 }
 
-func TestMediaSignatureChangesWithTimestamp(t *testing.T) {
-	handler := newMediaHandler("demo-cloud", "public-key", "secret", "")
-	handler.now = func() time.Time { return time.Unix(1700000000, 0) }
-	first := cloudinarySignature(map[string]string{"folder": "a", "timestamp": "1"}, "secret")
-	second := cloudinarySignature(map[string]string{"folder": "a", "timestamp": "2"}, "secret")
-	if first == second || len(first) != 40 {
-		t.Fatalf("signatures = %q %q", first, second)
-	}
-}
-
-func TestSanitizeFolderPath(t *testing.T) {
-	if got := sanitizeFolderPath(""); got != "ispilolite" {
-		t.Fatalf("empty = %q", got)
-	}
-	if got := sanitizeFolderPath(" my folder/prod! "); got != "my-folder/prod" {
-		t.Fatalf("sanitized = %q", got)
-	}
-}
-
-func TestMediaServerFallbackForwardsMultipartAndReturnsSecureURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1_1/demo-cloud/image/upload") {
-			t.Fatalf("unexpected Cloudinary request: %s %s", r.Method, r.URL.Path)
+func TestMediaFallbackPutsBytesToR2(t *testing.T) {
+	var uploaded []byte
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/ispilo-media/ispilolite/profiles/user-1/") || r.URL.Query().Get("X-Amz-Signature") == "" {
+			t.Fatalf("unexpected R2 request: %s %s", r.Method, r.URL.String())
 		}
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatal(err)
-		}
-		if r.FormValue("folder") != "ispilolite/profiles/user-1" {
-			t.Fatalf("folder=%q", r.FormValue("folder"))
-		}
-		file, _, err := r.FormFile("file")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		content, err := io.ReadAll(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(content) != "\xff\xd8\xff\xe0image" {
-			t.Fatalf("content=%q", content)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"secure_url":"https://res.cloudinary.com/demo/image/upload/v1/photo.jpg","public_id":"ispilolite/profiles/user-1/photo","format":"jpg","bytes":11,"width":100,"height":100,"resource_type":"image"}`))
+		uploaded, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	h := newMediaHandler("demo-cloud", "public-key", "secret", "ispilolite")
-	h.cloudinaryBaseURL = server.URL
+	h := newMediaHandler(server.URL, "r2-access", "r2-secret", "ispilo-media", "https://media.ispilo.co.ke", "auto", "ispilolite")
 	h.client = server.Client()
+	h.now = func() time.Time { return time.Unix(1700000000, 0).UTC() }
 
 	var body bytes.Buffer
-	multipartWriter := multipart.NewWriter(&body)
-	_ = multipartWriter.WriteField("kind", "profile")
-	part, err := multipartWriter.CreateFormFile("file", "photo.jpg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("kind", "profile")
+	part, _ := writer.CreateFormFile("file", "photo.jpg")
 	_, _ = part.Write([]byte("\xff\xd8\xff\xe0image"))
-	if err := multipartWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_ = writer.Close()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload", &body)
-	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	ctx := context.WithValue(context.Background(), "userID", "user-1")
 	ctx = context.WithValue(ctx, "userRole", "customer")
-	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-
-	h.Upload(rec, req)
-
-	if rec.Code != http.StatusOK {
+	h.Upload(rec, req.WithContext(ctx))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "https://media.ispilo.co.ke/ispilolite/profiles/user-1/") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "https://res.cloudinary.com/demo/image/upload/v1/photo.jpg") {
-		t.Fatalf("missing secure URL: %s", rec.Body.String())
+	if string(uploaded) != "\xff\xd8\xff\xe0image" {
+		t.Fatalf("uploaded=%q", uploaded)
+	}
+}
+
+func TestR2SignatureChangesWithTimestamp(t *testing.T) {
+	h := testR2Handler()
+	first, _, _ := h.presignedPutURL("ispilolite/profiles/user/a.jpg", time.Unix(1700000000, 0).UTC(), r2UploadTTL)
+	second, _, _ := h.presignedPutURL("ispilolite/profiles/user/a.jpg", time.Unix(1700000001, 0).UTC(), r2UploadTTL)
+	if first == second {
+		t.Fatal("presigned URL did not change with timestamp")
 	}
 }

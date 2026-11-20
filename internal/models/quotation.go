@@ -46,17 +46,17 @@ type Quotation struct {
 }
 
 type Document struct {
-	ID                 string    `json:"id"`
-	OwnerID            string    `json:"owner_id"`
-	QuotationID        string    `json:"quotation_id,omitempty"`
-	CloudinaryPublicID string    `json:"-"`
-	CloudinaryURL      string    `json:"-"`
-	StoragePath        string    `json:"-"`
-	FileName           string    `json:"file_name"`
-	ContentType        string    `json:"content_type"`
-	Visibility         string    `json:"visibility"`
-	CreatedAt          time.Time `json:"created_at"`
-	DownloadURL        string    `json:"download_url,omitempty"`
+	ID          string    `json:"id"`
+	OwnerID     string    `json:"owner_id"`
+	QuotationID string    `json:"quotation_id,omitempty"`
+	ObjectKey   string    `json:"-"`
+	MediaURL    string    `json:"-"`
+	StoragePath string    `json:"-"`
+	FileName    string    `json:"file_name"`
+	ContentType string    `json:"content_type"`
+	Visibility  string    `json:"visibility"`
+	CreatedAt   time.Time `json:"created_at"`
+	DownloadURL string    `json:"download_url,omitempty"`
 }
 
 type QuotationItem struct {

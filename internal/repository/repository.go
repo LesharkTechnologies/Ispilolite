@@ -48,6 +48,7 @@ type ISPRepository interface {
 	ListPackageSubscriptions(userID, role, status string, limit int) ([]*models.PackageSubscription, error)
 	SetPackageAutoRenew(subscriptionID, customerID string, enabled bool) error
 	RecordPackageUsage(event *models.PackageUsageEvent) (*models.PackageSubscription, error)
+	SetWorkingCounties(ispID string, counties []string) error
 }
 
 type ReviewRepository interface {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"ispilolite/internal/models"
 	"ispilolite/pkg/database"
 )
@@ -29,17 +30,17 @@ func NewJobRequestRepo() (*JobRepository, error) {
 	}, nil
 }
 
-const jobColumns = `id,customer_id,requester_role,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
-const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at,warranty_days,warranty_expires_at,response_due_at,quote_due_at,installation_due_at,viewed_at,accepted_at,scheduled_at,completed_at,loss_reason`
+const jobColumns = `id,customer_id,requester_role,request_type,mode,target_isp_id,target_technician_id,assigned_isp_id,assigned_technician_id,location_id,county,town,village,service_type,speed_mbps,description,photo_urls,budget,preferred_date,status,is_available,created_at,updated_at,deleted_at`
+const jobSelectColumns = `id,customer_id,requester_role,request_type,mode,COALESCE(target_isp_id::text,''),COALESCE(target_technician_id::text,''),COALESCE(assigned_isp_id::text,''),COALESCE(assigned_technician_id::text,''),COALESCE(location_id::text,''),county,town,village,service_type,COALESCE(speed_mbps,0),description,COALESCE(photo_urls,'{}'::text[]),budget,preferred_date,status,is_available,created_at,updated_at,deleted_at,warranty_days,warranty_expires_at,response_due_at,quote_due_at,installation_due_at,viewed_at,accepted_at,scheduled_at,completed_at,loss_reason`
 
 func scanJob(row interface{ Scan(...interface{}) error }) (*models.JobRequest, error) {
 	job := &models.JobRequest{}
-	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt, &job.WarrantyDays, &job.WarrantyExpiresAt, &job.ResponseDueAt, &job.QuoteDueAt, &job.InstallationDueAt, &job.ViewedAt, &job.AcceptedAt, &job.ScheduledAt, &job.CompletedAt, &job.LossReason)
+	err := row.Scan(&job.ID, &job.CustomerID, &job.RequesterRole, &job.RequestType, &job.Mode, &job.TargetISPID, &job.TechnicianID, &job.AssignedISPID, &job.AssignedTechnicianID, &job.LocationID, &job.County, &job.Town, &job.Village, &job.ServiceType, &job.SpeedMbps, &job.Description, pq.Array(&job.PhotoURLs), &job.Budget, &job.PreferredDate, &job.Status, &job.IsAvailable, &job.CreatedAt, &job.UpdatedAt, &job.DeletedAt, &job.WarrantyDays, &job.WarrantyExpiresAt, &job.ResponseDueAt, &job.QuoteDueAt, &job.InstallationDueAt, &job.ViewedAt, &job.AcceptedAt, &job.ScheduledAt, &job.CompletedAt, &job.LossReason)
 	return job, err
 }
 
 func (r *JobRepository) CreateJobRequest(job *models.JobRequest) error {
-	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, job.ID, job.CustomerID, job.RequesterRole, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
+	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, job.ID, job.CustomerID, job.RequesterRole, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, pq.Array(job.PhotoURLs), job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
 	return err
 }
 

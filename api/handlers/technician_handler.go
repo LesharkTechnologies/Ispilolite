@@ -267,7 +267,7 @@ func (h *TechnicianHandler) CreateJobRequest(w http.ResponseWriter, r *http.Requ
 		}
 		preferredDate = &parsed
 	}
-	job, err := h.jobRequestService.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: "technician_service", Mode: "direct", TechnicianID: technicianID, ServiceType: request.ServiceType, Description: request.Description, Town: request.Town, County: request.County, Budget: request.Budget, PreferredDate: preferredDate})
+	job, err := h.jobRequestService.Create(userIDFromContext(r.Context()), &models.JobRequest{RequestType: "technician_service", Mode: "direct", TechnicianID: technicianID, ServiceType: request.ServiceType, Description: request.Description, PhotoURLs: request.PhotoURLs, Town: request.Town, County: request.County, Budget: request.Budget, PreferredDate: preferredDate})
 	if err != nil {
 		h.respondJobRequestError(w, err)
 		return

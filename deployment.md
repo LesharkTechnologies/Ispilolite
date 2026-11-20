@@ -172,7 +172,7 @@ CONFIG_PATH=config/config.yaml
 JWT_SECRET=<64+ random characters, e.g. openssl rand -hex 32>
 JWT_ISSUER=ispilolite
 JWT_ACCESS_TTL=15m
-JWT_REFRESH_TTL=168h
+JWT_REFRESH_TTL=8760h
 
 # --- OTP hashing (REQUIRED in production) ---
 # Verification codes are stored in Redis only as HMAC-SHA256 digests keyed by
@@ -216,12 +216,15 @@ RABBITMQ_PREFETCH=20
 NOTIFICATION_WEBHOOK_URL=https://notifications.example.com/deliver
 ADMIN_ALERT_PHONES=+2547XXXXXXXX
 
-# --- Media storage (Cloudinary signed uploads) ---
-CLOUDINARY_CLOUD_NAME=<your-cloud-name>
-CLOUDINARY_API_KEY=<your-public-api-key>
-CLOUDINARY_API_SECRET=<your-server-only-api-secret>
-CLOUDINARY_FOLDER_PREFIX=ispilolite
-CLOUDINARY_ALLOWED_HOSTS=res.cloudinary.com
+# --- Media storage (Cloudflare R2 presigned PUT uploads) ---
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=<your-r2-access-key-id>
+R2_SECRET_ACCESS_KEY=<your-r2-secret-access-key>
+R2_BUCKET=ispilo-media
+R2_PUBLIC_BASE_URL=https://media.ispilo.co.ke
+R2_REGION=auto
+R2_FOLDER_PREFIX=ispilolite
+R2_ALLOWED_HOSTS=media.ispilo.co.ke
 
 # --- Storage / audit ---
 DOCUMENT_STORAGE_ROOT=/var/lib/ispilolite/documents

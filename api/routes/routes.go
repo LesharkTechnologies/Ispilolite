@@ -289,7 +289,8 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	}
 
 	// Separate rate limiters: auth endpoints are much stricter.
-	authLimiter := middleware.NewRateLimiter(database.GetRedis(), 5, time.Minute)  // 5/min for register/login/OTP
+	authLimiter := middleware.NewRateLimiter(database.GetRedis(), 5, time.Minute)  // 5/min for register/OTP
+	loginLimiter := middleware.NewRateLimiter(database.GetRedis(), 8, 5*time.Minute) // 8 attempts per 5 mins for login
 	apiLimiter := middleware.NewRateLimiter(database.GetRedis(), 300, time.Minute) // 300/min for standard API
 
 	router.Use(stdMiddleware(middleware.SecurityHeaders()))
@@ -336,12 +337,13 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 
 	// Auth group: strict rate limit, no auth required.
 	authGroup := api.Group("/auth")
-	authGroup.Use(stdMiddleware(authLimiter.Middleware))
-	authGroup.POST("/register", stdHandler(authHandlerInst.Register))
-	authGroup.POST("/login", stdHandler(authHandlerInst.Login))
-	authGroup.POST("/verify-otp", stdHandler(authHandlerInst.VerifyOTP))
-	authGroup.POST("/refresh", stdHandler(authHandlerInst.RefreshToken))
+	authGroup.POST("/register", stdMiddleware(authLimiter.Middleware), stdHandler(authHandlerInst.Register))
+	authGroup.POST("/login", stdMiddleware(loginLimiter.Middleware), stdHandler(authHandlerInst.Login))
+	authGroup.POST("/verify-otp", stdMiddleware(authLimiter.Middleware), stdHandler(authHandlerInst.VerifyOTP))
+	authGroup.POST("/refresh", stdMiddleware(authLimiter.Middleware), stdHandler(authHandlerInst.RefreshToken))
 	authGroup.POST("/logout", stdHandler(authHandlerInst.Logout))
+	authGroup.POST("/forgot-password", stdMiddleware(authLimiter.Middleware), stdHandler(authHandlerInst.ForgotPassword))
+	authGroup.POST("/reset-password", stdMiddleware(authLimiter.Middleware), stdHandler(authHandlerInst.ResetPassword))
 
 	// Social follows connect users of any role. This does not grant employment,
 	// job access, or ISP membership to the followed account.
@@ -441,7 +443,7 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.GET("/my/business-profile", authHandler("", admin.MyBusinessProfile))
 	api.PUT("/my/business-profile", authHandler("", admin.MyBusinessProfile))
 
-	api.POST("/installations", authHandler("customer", client.CreateInstallation))
+	api.POST("/installations", idempotentAuthHandler("customer", client.CreateInstallation, idempotencyStore))
 	api.PUT("/installations/*path", authHandler("isp", ispEndpoints.UpdateInstallation))
 	api.GET("/my/jobs", authHandlerByRole(map[string]http.HandlerFunc{"customer": client.GetJobs, "isp": ispEndpoints.GetJobs}))
 	api.POST("/my/jobs", idempotentAuthHandler("customer", client.CreateJob, idempotencyStore))
@@ -517,6 +519,7 @@ func SetupRouter() (http.Handler, *matching.MatchingService, error) {
 	api.PUT("/my/portfolio/posts/:id", authHandler("technician", technician.UpdatePortfolioPost))
 	api.DELETE("/my/portfolio/posts/:id", authHandler("technician", technician.DeletePortfolioPost))
 
+	api.GET("/my/packages", authHandler("isp", ispEndpoints.ListMyPackages))
 	api.POST("/my/packages", authHandler("isp", ispEndpoints.CreatePackage))
 	api.PUT("/packages/:id/prices", authHandler("isp", ispEndpoints.SetPackageCountyPrice))
 	api.POST("/packages/:id/archive", authHandler("isp", ispEndpoints.ArchivePackage))

@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ispilo Lite (Chrome - Dev Mode)",
+      "cwd": "ispiloliteapp",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "-d",
+        "chrome",
+        "--web-browser-flag",
+        "--disable-web-security"
+      ]
+    },
+    {
+      "name": "Ispilo Lite (Windows Desktop)",
+      "cwd": "ispiloliteapp",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "-d",
+        "windows"
+      ]
+    },
+    {
+      "name": "Ispilo Lite (Default Device)",
+      "cwd": "ispiloliteapp",
+      "request": "launch",
+      "type": "dart"
+    }
+  ]
+}

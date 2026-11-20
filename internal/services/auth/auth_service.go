@@ -35,17 +35,16 @@ func ValidatePhone(phone string) error {
 }
 
 var (
-	ErrUserAlreadyExists  = errors.New("user already exists")
-	ErrPhoneNotRegistered = errors.New("phone not registered")
-	ErrUserNotFound       = errors.New("user not found")
-	ErrInvalidOTP         = errors.New("invalid OTP")
-	ErrOTPExpired         = errors.New("OTP expired")
-	ErrInvalidToken       = errors.New("invalid token")
-	ErrInvalidPassword    = errors.New("invalid credentials")
-	ErrAccountUnverified  = errors.New("account is not verified")
-	ErrTokenRevoked       = errors.New("token revoked")
-	ErrRateLimited        = errors.New("too many attempts, try again later")
-	ErrInvalidReferral    = errors.New("invalid referral code")
+	ErrUserAlreadyExists = errors.New("user already exists")
+	ErrUserNotFound      = errors.New("user not found")
+	ErrInvalidOTP        = errors.New("invalid OTP")
+	ErrOTPExpired        = errors.New("OTP expired")
+	ErrInvalidToken      = errors.New("invalid token")
+	ErrInvalidPassword   = errors.New("invalid credentials")
+	ErrAccountUnverified = errors.New("account is not verified")
+	ErrTokenRevoked      = errors.New("token revoked")
+	ErrRateLimited       = errors.New("too many attempts, try again later")
+	ErrInvalidReferral   = errors.New("invalid referral code")
 )
 
 // MaxOTPAttemptsPerWindow is the maximum number of OTP requests per phone
@@ -96,7 +95,7 @@ func NewAuthService(userRepo repository.UserRepository, cacheRepo repository.Cac
 		secret:     []byte(secret),
 		issuer:     issuer,
 		accessTTL:  authTTL("JWT_ACCESS_TTL", 15*time.Minute),
-		refreshTTL: authTTL("JWT_REFRESH_TTL", 7*24*time.Hour),
+		refreshTTL: authTTL("JWT_REFRESH_TTL", 365*24*time.Hour),
 		otpTTL:     authTTL("OTP_TTL", 10*time.Minute),
 	}
 }
@@ -126,13 +125,12 @@ func (s *AuthService) CreateUser(req dto.RegisterRequest) (*models.User, error) 
 		}
 	}
 
-	passwordHash := ""
-	if normalizeRole(req.Role) != "customer" {
-		var err error
-		passwordHash, err = utils.HashPassword(req.Password)
-		if err != nil {
-			return nil, err
-		}
+	if len(req.Password) < 8 {
+		return nil, errors.New("password must be at least 8 characters")
+	}
+	passwordHash, err := utils.HashPassword(req.Password)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -158,6 +156,8 @@ func (s *AuthService) CreateUser(req dto.RegisterRequest) (*models.User, error) 
 		ReferralCode:   referralCode,
 		ReferredByCode: strings.ToUpper(strings.TrimSpace(req.ReferralCode)),
 		Locale:         normalizeLocale(req.Locale),
+		County:         strings.TrimSpace(req.County),
+		Town:           strings.TrimSpace(req.Town),
 	}
 
 	if err := s.userRepo.CreateUser(user); err != nil {
@@ -192,9 +192,6 @@ func (s *AuthService) AuthenticateWithPassword(phone, password string) (*models.
 	if err != nil || !ok {
 		return nil, ErrInvalidPassword
 	}
-	if user.Role == "customer" {
-		return nil, ErrInvalidPassword
-	}
 	if !user.IsVerified {
 		return nil, ErrAccountUnverified
 	}
@@ -209,9 +206,6 @@ func (s *AuthService) AuthenticateWithUsername(username, password string) (*mode
 		return nil, ErrInvalidPassword
 	}
 	if user.Status != "active" {
-		return nil, ErrInvalidPassword
-	}
-	if user.Role == "customer" {
 		return nil, ErrInvalidPassword
 	}
 	ok, err := utils.VerifyPassword(password, user.PasswordHash)
@@ -290,8 +284,8 @@ func (s *AuthService) IssueOTPFromIP(userID, sourceIP string) (string, int, erro
 
 	// Delivery failures must not leave a dangling OTP the caller can't receive.
 	if s.notifier == nil {
-		_ = s.cacheRepo.DeleteOTP(userID)
-		return "", 0, fmt.Errorf("SMS sender is not configured")
+		fmt.Printf("[AUTH DEV] SMS sender not configured. Verification code for %s (user %s): %s\n", user.Phone, userID, code)
+		return code, int(s.otpTTL.Seconds()), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -301,6 +295,10 @@ func (s *AuthService) IssueOTPFromIP(userID, sourceIP string) (string, int, erro
 	}
 	msg := fmt.Sprintf("Your Ispilo Lite verification code is %s. It expires in %d minutes.", code, expiresMin)
 	if err := s.notifier.Send(ctx, notification.Message{To: user.Phone, Subject: "Verification code", Body: msg}); err != nil {
+		fmt.Printf("[AUTH WARN] SMS delivery failed: %v. Fallback verification code for %s (user %s): %s\n", err, user.Phone, userID, code)
+		if os.Getenv("APP_ENV") != "production" {
+			return code, int(s.otpTTL.Seconds()), nil
+		}
 		_ = s.cacheRepo.DeleteOTP(userID)
 		return "", 0, fmt.Errorf("failed to deliver OTP: %w", err)
 	}
@@ -308,32 +306,73 @@ func (s *AuthService) IssueOTPFromIP(userID, sourceIP string) (string, int, erro
 	return code, int(s.otpTTL.Seconds()), nil
 }
 
-// RequestLoginOTP validates phone and issues an OTP.
-func (s *AuthService) RequestLoginOTP(phone string) (*models.User, int, error) {
-	return s.RequestLoginOTPFromIP(phone, "")
-}
-
-func (s *AuthService) RequestLoginOTPFromIP(phone, sourceIP string) (*models.User, int, error) {
-	user, err := s.userRepo.GetUserByPhone(strings.TrimSpace(phone))
-	if err != nil {
-		return nil, 0, ErrPhoneNotRegistered
+// ForgotPassword requests an OTP to reset password via phone number or username.
+func (s *AuthService) ForgotPassword(phoneOrUsername, sourceIP string) (*models.User, int, error) {
+	clean := strings.TrimSpace(phoneOrUsername)
+	if clean == "" {
+		return nil, 0, errors.New("phone number or username is required")
+	}
+	var user *models.User
+	var err error
+	if strings.HasPrefix(clean, "+") || (len(clean) >= 9 && clean[0] == '0') {
+		user, err = s.userRepo.GetUserByPhone(clean)
+	} else {
+		user, err = s.userRepo.GetUserByUsername(clean)
+		if err != nil {
+			user, err = s.userRepo.GetUserByPhone(clean)
+		}
+	}
+	if err != nil || user == nil {
+		return nil, 0, ErrUserNotFound
 	}
 	if user.Status != "active" {
-		return nil, 0, ErrPhoneNotRegistered
+		return nil, 0, ErrUserNotFound
 	}
-	if !user.IsVerified {
-		return nil, 0, ErrAccountUnverified
-	}
-	if user.Role != "customer" {
-		return nil, 0, ErrInvalidPassword
-	}
-
 	_, expiresIn, err := s.IssueOTPFromIP(user.ID, sourceIP)
 	if err != nil {
 		return nil, 0, err
 	}
-
 	return user, expiresIn, nil
+}
+
+// ResetPasswordWithOTP verifies the SMS OTP and safely sets a new password.
+func (s *AuthService) ResetPasswordWithOTP(userID, phone, otp, newPassword string) (*models.User, error) {
+	newPassword = strings.TrimSpace(newPassword)
+	if len(newPassword) < 8 {
+		return nil, errors.New("password must be at least 8 characters")
+	}
+	var user *models.User
+	var err error
+	targetID := strings.TrimSpace(userID)
+	if targetID == "" && strings.TrimSpace(phone) != "" {
+		user, err = s.userRepo.GetUserByPhone(strings.TrimSpace(phone))
+		if err != nil || user == nil {
+			return nil, ErrUserNotFound
+		}
+		targetID = user.ID
+	}
+	if targetID == "" {
+		return nil, errors.New("user ID or phone number is required")
+	}
+
+	user, err = s.VerifyOTP(targetID, otp)
+	if err != nil {
+		return nil, err
+	}
+
+	hash, err := utils.HashPassword(newPassword)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+
+	user.PasswordHash = hash
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.userRepo.UpdateUser(user); err != nil {
+		return nil, fmt.Errorf("update user password: %w", err)
+	}
+	_ = s.userRepo.RevokeAllRefreshSessions(user.ID)
+
+	return user, nil
 }
 
 // VerifyOTP checks the OTP and marks the user as verified.
@@ -423,18 +462,17 @@ func (s *AuthService) GenerateRefreshToken(user *models.User) (string, error) {
 	return token, nil
 }
 
-// RefreshAccessToken swaps a valid refresh token for a new access token.
-// The old refresh token is revoked (rotated) to prevent replay attacks:
-// if a refresh token is stolen and used, the attacker and the legitimate
-// user will both be invalidated on the next use.
-func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, error) {
+// RefreshAccessToken rotates a valid refresh token and returns a fresh token
+// pair. Rotation lets mobile sessions survive app restarts without keeping a
+// replayable refresh credential indefinitely.
+func (s *AuthService) RefreshAccessToken(refreshToken string) (string, string, int, error) {
 	claims, err := s.parseToken(refreshToken)
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
 
 	if claims.TokenUse != "refresh" {
-		return "", 0, ErrInvalidToken
+		return "", "", 0, ErrInvalidToken
 	}
 
 	// JTI replay protection: a refresh token must only be used once.
@@ -443,20 +481,29 @@ func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, erro
 	if err == nil && used != "" {
 		// Token already used — possible theft. Revoke all sessions for this user.
 		_ = s.userRepo.RevokeAllRefreshSessions(claims.UserID)
-		return "", 0, ErrInvalidToken
+		return "", "", 0, ErrInvalidToken
 	}
 
 	active, err := s.userRepo.RefreshSessionActive(claims.ID, tokenHash(refreshToken))
 	if err != nil || !active {
-		return "", 0, ErrInvalidToken
+		return "", "", 0, ErrInvalidToken
 	}
 
 	user, err := s.GetUserByID(claims.UserID)
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
 	if user.Status != "active" {
-		return "", 0, ErrInvalidToken
+		return "", "", 0, ErrInvalidToken
+	}
+
+	accessToken, expiresIn, err := s.GenerateAccessToken(user)
+	if err != nil {
+		return "", "", 0, err
+	}
+	newRefreshToken, err := s.GenerateRefreshToken(user)
+	if err != nil {
+		return "", "", 0, err
 	}
 
 	// Mark this JTI as used (prevents replay) with a TTL equal to the token's
@@ -468,8 +515,11 @@ func (s *AuthService) RefreshAccessToken(refreshToken string) (string, int, erro
 
 	// Revoke the old refresh token (rotation).
 	_ = s.cacheRepo.SetRevokedToken(refreshToken, ttl)
+	if revoker, ok := s.userRepo.(interface{ RevokeRefreshSession(string) error }); ok {
+		_ = revoker.RevokeRefreshSession(claims.ID)
+	}
 
-	return s.GenerateAccessToken(user)
+	return accessToken, newRefreshToken, expiresIn, nil
 }
 
 func tokenHash(token string) string {

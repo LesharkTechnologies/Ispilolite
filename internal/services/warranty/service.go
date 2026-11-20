@@ -30,7 +30,7 @@ func (s *Service) Create(ctx context.Context, jobID, customerID, description str
 	if description == "" {
 		return nil, ErrInvalid
 	}
-	urls, err := validation.CloudinaryURLs(photos, 8)
+	urls, err := validation.MediaURLs(photos, 8)
 	if err != nil {
 		return nil, err
 	}

@@ -78,7 +78,7 @@ func (s *Service) Finalize(issuerID, role string, req dto.FinalizeQuotationReque
 	}
 	q := &models.Quotation{ID: utils.GenerateID(), PublicCode: code, QuotationNumber: number, IssuerID: issuerID, IssuerRole: role, CustomerID: customer.ID, RequestID: strings.TrimSpace(req.RequestID), CompanyName: issuer.Name, CompanyPhone: issuer.Phone, CompanyEmail: issuer.Email, CompanyAddress: strings.TrimSpace(req.CompanyAddress), CompanyLogoURL: strings.TrimSpace(req.CompanyLogoURL), BusinessType: strings.ToUpper(role), CustomerName: customer.Name, CustomerPhone: customer.Phone, CustomerEmail: customer.Email, CustomerLocation: strings.TrimSpace(strings.Join([]string{customer.Town, customer.County}, ", ")), Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), TransportAmount: money(req.TransportAmount), PaymentMethod: strings.ToUpper(strings.TrimSpace(req.PaymentMethod)), PaymentDetails: req.PaymentDetails, Terms: cleanTerms(req.Terms), Notes: strings.TrimSpace(req.Notes), Status: "FINALIZED", CreatedAt: now, UpdatedAt: now, FinalizedAt: now}
 	if q.CompanyLogoURL != "" {
-		urls, err := validation.CloudinaryURLs([]string{q.CompanyLogoURL}, 1)
+		urls, err := validation.MediaURLs([]string{q.CompanyLogoURL}, 1)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidQuotation, err)
 		}

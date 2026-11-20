@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Advisory until existing findings are triaged: G704 (possible SSRF),
-    # G703 (path traversal), G201/G202 (dynamic SQL) and the SHA-1 Cloudinary
+    # G703 (path traversal), G201/G202 (dynamic SQL) and the SHA-1 Cloudflare R2
     # signature need human review rather than silent exclusion. Findings stay
     # visible in every run; remove continue-on-error once triage is complete.
     continue-on-error: true

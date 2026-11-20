@@ -13,12 +13,20 @@ import (
 	goredis "github.com/go-redis/redis/v8"
 )
 
-// RateLimiter is a Redis-backed fixed-window rate limiter keyed by IP + route.
+// RateLimiter is a Redis-backed fixed-window rate limiter keyed by IP + route,
+// with an in-memory sliding bucket fallback when Redis is absent.
 type RateLimiter struct {
-	client *goredis.Client
-	limit  int64
-	window time.Duration
-	prefix string
+	client  *goredis.Client
+	limit   int64
+	window  time.Duration
+	prefix  string
+	mu      sync.Mutex
+	buckets map[string]*memBucket
+}
+
+type memBucket struct {
+	count     int64
+	expiresAt time.Time
 }
 
 func NewRateLimiter(client *goredis.Client, limit int, window time.Duration) *RateLimiter {
@@ -28,13 +36,34 @@ func NewRateLimiter(client *goredis.Client, limit int, window time.Duration) *Ra
 	if window <= 0 {
 		window = time.Minute
 	}
-	return &RateLimiter{client: client, limit: int64(limit), window: window, prefix: "ratelimit:"}
+	return &RateLimiter{
+		client:  client,
+		limit:   int64(limit),
+		window:  window,
+		prefix:  "ratelimit:",
+		buckets: make(map[string]*memBucket),
+	}
 }
 
 var rateScript = goredis.NewScript(`local current=redis.call('INCR',KEYS[1]);if current==1 then redis.call('PEXPIRE',KEYS[1],ARGV[1]) end;local ttl=redis.call('PTTL',KEYS[1]);return {current,ttl}`)
 
 func (r *RateLimiter) Allow(ctx context.Context, key string) (bool, time.Duration, error) {
 	if r.client == nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		now := time.Now()
+		b, exists := r.buckets[key]
+		if !exists || now.After(b.expiresAt) {
+			r.buckets[key] = &memBucket{
+				count:     1,
+				expiresAt: now.Add(r.window),
+			}
+			return true, 0, nil
+		}
+		b.count++
+		if b.count > r.limit {
+			return false, b.expiresAt.Sub(now), nil
+		}
 		return true, 0, nil
 	}
 	result, err := rateScript.Run(ctx, r.client, []string{r.prefix + key}, r.window.Milliseconds()).Int64Slice()
@@ -59,7 +88,9 @@ func (r *RateLimiter) Middleware(next http.Handler) http.Handler {
 				seconds = 1
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"success":false,"message":"too many login attempts. Please wait 5 minutes before trying again.","retry_after":` + strconv.Itoa(seconds) + `}`))
 			return
 		}
 		next.ServeHTTP(w, req)

@@ -39,11 +39,25 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Public registration is customer-only. ISP, technician, and admin
-	// accounts must be provisioned by an authorized internal/admin workflow.
-	req.Role = "customer"
-	req.Username = ""
-	req.Password = ""
+	// Public registration allows customer, technician, or isp role. Every
+	// account uses a password; the SMS code verifies ownership of the phone and
+	// is not a passwordless sign-in method.
+	role := strings.ToLower(strings.TrimSpace(req.Role))
+	if role == "" || (role != "customer" && role != "technician" && role != "isp") {
+		role = "customer"
+	}
+	req.Role = role
+	req.Username = strings.TrimSpace(req.Username)
+	req.County = strings.TrimSpace(req.County)
+	req.Town = strings.TrimSpace(req.Town)
+	if len(req.County) > 80 || len(req.Town) > 100 {
+		respondWithError(w, http.StatusBadRequest, "county or town is too long")
+		return
+	}
+	if len(req.Password) < 8 {
+		respondWithError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
 	user, err := h.authService.CreateUser(req)
 	if err != nil {
 		recordAudit(r, "user.register", "REGISTER", "user", "", err.Error(), false, map[string]interface{}{"phone": req.Phone})
@@ -76,6 +90,26 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusCreated, dto.APIResponse{Success: true, Message: "verification code sent", Data: map[string]any{"user_id": user.ID, "expires_in": expiresIn}})
 }
 
+// NormalizePhone standardizes Kenyan mobile numbers to E.164 (+254...).
+func NormalizePhone(phone string) string {
+	clean := strings.TrimSpace(phone)
+	clean = strings.ReplaceAll(clean, " ", "")
+	clean = strings.ReplaceAll(clean, "-", "")
+	clean = strings.ReplaceAll(clean, "(", "")
+	clean = strings.ReplaceAll(clean, ")", "")
+	if strings.HasPrefix(clean, "00") {
+		clean = clean[2:]
+	}
+	if strings.HasPrefix(clean, "0") && len(clean) == 10 {
+		clean = "+254" + clean[1:]
+	} else if strings.HasPrefix(clean, "254") && len(clean) == 12 {
+		clean = "+" + clean
+	} else if (strings.HasPrefix(clean, "7") || strings.HasPrefix(clean, "1")) && len(clean) == 9 {
+		clean = "+254" + clean
+	}
+	return clean
+}
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req dto.LoginRequest
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -84,9 +118,38 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	phone := strings.TrimSpace(req.Phone)
 	username := strings.TrimSpace(req.Username)
-	password := strings.TrimSpace(req.Password)
+	rawIdentifier := strings.TrimSpace(req.Identifier)
+	password := req.Password
+
+	// If identifier is provided, resolve whether it is a phone or username.
+	if rawIdentifier != "" {
+		if phone == "" && username == "" {
+			normalized := NormalizePhone(rawIdentifier)
+			if authsvc.ValidatePhone(normalized) == nil {
+				phone = normalized
+			} else {
+				username = rawIdentifier
+			}
+		}
+	}
+
+	if phone != "" {
+		phone = NormalizePhone(phone)
+	} else if username != "" {
+		// If username looks like a phone number, normalize and check
+		normalized := NormalizePhone(username)
+		if authsvc.ValidatePhone(normalized) == nil {
+			phone = normalized
+			username = ""
+		}
+	}
+
 	if phone == "" && username == "" {
-		respondWithError(w, http.StatusBadRequest, "phone is required for customers; username is required for staff")
+		respondWithError(w, http.StatusBadRequest, "provide phone number or username")
+		return
+	}
+	if password == "" {
+		respondWithError(w, http.StatusBadRequest, "password is required")
 		return
 	}
 	if phone != "" {
@@ -96,46 +159,26 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if username != "" {
-		if phone != "" || password == "" {
-			recordAudit(r, "user.login", "LOGIN", "user", "", "invalid staff login shape", false, map[string]interface{}{"username": username})
-			respondWithError(w, http.StatusBadRequest, "staff login requires username and password only")
-			return
-		}
-		var user *models.User
-		var err error
+	var user *models.User
+	var err error
+	identifier := username
+	if phone != "" {
+		identifier = phone
+		user, err = h.authService.AuthenticateWithPassword(phone, password)
+	} else {
 		user, err = h.authService.AuthenticateWithUsername(username, password)
-		if err != nil {
-			recordAuditWithActor(r, "", "staff", "user.login", "LOGIN", "user", "", "Password login failed for username "+username, false, map[string]interface{}{"phone": req.Phone, "username": req.Username})
-			if errors.Is(err, authsvc.ErrAccountUnverified) {
-				respondWithError(w, http.StatusForbidden, "verify your phone number before logging in")
-				return
-			}
-			respondWithError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-		h.respondWithTokens(w, user)
-		recordAuditWithActor(r, user.ID, user.Role, "user.login", "LOGIN", "user", user.ID, user.Role+" user "+user.Username+" logged in successfully", true, map[string]interface{}{"username": user.Username, "role": user.Role})
-		return
 	}
-	if password != "" {
-		recordAudit(r, "user.login", "LOGIN", "user", "", "customer password login rejected", false, map[string]interface{}{"phone": phone})
-		respondWithError(w, http.StatusBadRequest, "customers sign in with phone OTP; staff sign in with username and password")
-		return
-	}
-	user, expiresIn, err := h.authService.RequestLoginOTPFromIP(phone, middleware.ClientIP(r))
 	if err != nil {
-		recordAudit(r, "user.login", "LOGIN", "user", "", "OTP login request failed", false, map[string]interface{}{"phone": phone})
-		if errors.Is(err, authsvc.ErrRateLimited) {
-			w.Header().Set("Retry-After", "30")
-			respondWithError(w, http.StatusTooManyRequests, "please wait before requesting another verification code")
+		recordAudit(r, "user.login", "LOGIN", "user", "", "password login failed", false, map[string]interface{}{"identifier": identifier})
+		if errors.Is(err, authsvc.ErrAccountUnverified) {
+			respondWithError(w, http.StatusForbidden, "verify your phone number before logging in")
 			return
 		}
-		respondWithError(w, http.StatusNotFound, err.Error())
+		respondWithError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	recordAuditWithActor(r, user.ID, user.Role, "user.login_otp_requested", "LOGIN", "user", user.ID, "login verification code sent to "+phone, true, map[string]interface{}{"phone": phone})
-	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "OTP sent to your phone", Data: map[string]any{"user_id": user.ID, "expires_in": expiresIn}})
+	h.respondWithTokens(w, user)
+	recordAuditWithActor(r, user.ID, user.Role, "user.login", "LOGIN", "user", user.ID, user.Role+" user logged in successfully", true, map[string]interface{}{"identifier": identifier, "role": user.Role})
 }
 
 func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
@@ -165,14 +208,14 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "invalid request payload")
 		return
 	}
-	accessToken, expiresIn, err := h.authService.RefreshAccessToken(req.RefreshToken)
+	accessToken, refreshToken, expiresIn, err := h.authService.RefreshAccessToken(req.RefreshToken)
 	if err != nil {
 		recordAudit(r, "user.refresh_token", "LOGIN", "token", "", "access token refresh failed", false, nil)
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	recordAudit(r, "user.refresh_token", "LOGIN", "token", "", "access token refreshed successfully", true, nil)
-	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": expiresIn}})
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"access_token": accessToken, "refresh_token": refreshToken, "token_type": "Bearer", "expires_in": expiresIn}})
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +224,68 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	recordAudit(r, "user.logout", "LOGIN", "user", userIDFromContext(r.Context()), "user logged out successfully", true, nil)
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "logged out successfully"})
+}
+
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req dto.ForgotPasswordRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+	identifier := strings.TrimSpace(req.Phone)
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Username)
+	}
+	if identifier == "" {
+		respondWithError(w, http.StatusBadRequest, "phone number or username is required")
+		return
+	}
+
+	user, expiresIn, err := h.authService.ForgotPassword(identifier, middleware.ClientIP(r))
+	if err != nil {
+		recordAudit(r, "user.forgot_password", "PASSWORD_RESET", "user", "", "forgot password request failed for "+identifier, false, map[string]interface{}{"identifier": identifier})
+		if errors.Is(err, authsvc.ErrRateLimited) {
+			w.Header().Set("Retry-After", "30")
+			respondWithError(w, http.StatusTooManyRequests, "please wait before requesting another reset code")
+			return
+		}
+		respondWithError(w, http.StatusNotFound, "account not found")
+		return
+	}
+
+	recordAuditWithActor(r, user.ID, user.Role, "user.forgot_password", "PASSWORD_RESET", "user", user.ID, "password reset code dispatched to "+user.Phone, true, nil)
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Message: "password reset code sent to your phone",
+		Data: map[string]any{
+			"user_id":    user.ID,
+			"phone":      user.Phone,
+			"expires_in": expiresIn,
+		},
+	})
+}
+
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req dto.ResetPasswordRequest
+	if err := decodeJSON(w, r, &req); err != nil || strings.TrimSpace(req.OTP) == "" || len(strings.TrimSpace(req.NewPassword)) < 8 {
+		respondWithError(w, http.StatusBadRequest, "a 6-digit OTP and an 8-character new password are required")
+		return
+	}
+
+	user, err := h.authService.ResetPasswordWithOTP(req.UserID, req.Phone, req.OTP, req.NewPassword)
+	if err != nil {
+		recordAudit(r, "user.reset_password", "PASSWORD_RESET", "user", req.UserID, "password reset failed: "+err.Error(), false, nil)
+		if errors.Is(err, authsvc.ErrRateLimited) {
+			w.Header().Set("Retry-After", "900")
+			respondWithError(w, http.StatusTooManyRequests, "too many verification attempts; request a new code later")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	recordAuditWithActor(r, user.ID, user.Role, "user.reset_password", "PASSWORD_RESET", "user", user.ID, "password successfully reset", true, nil)
+	h.respondWithTokens(w, user)
 }
 
 func (h *AuthHandler) respondWithTokens(w http.ResponseWriter, user *models.User) {
@@ -194,7 +299,17 @@ func (h *AuthHandler) respondWithTokens(w http.ResponseWriter, user *models.User
 		respondWithError(w, http.StatusInternalServerError, "failed to create refresh token")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: map[string]any{"access_token": accessToken, "refresh_token": refreshToken, "token_type": "Bearer", "expires_in": expiresIn, "user": user}})
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{
+		Success: true,
+		Data: map[string]any{
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
+			"token_type":    "Bearer",
+			"expires_in":    expiresIn,
+			"role":          user.Role,
+			"user":          user,
+		},
+	})
 }
 
 func bearerTokenFromRequest(r *http.Request) (string, error) {

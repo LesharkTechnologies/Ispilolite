@@ -16,27 +16,35 @@ type RegisterRequest struct {
 	Password     string `json:"password,omitempty"`
 	ReferralCode string `json:"referral_code,omitempty"`
 	Locale       string `json:"locale,omitempty"`
+	County       string `json:"county,omitempty"`
+	Town         string `json:"town,omitempty"`
 }
 
 type LoginRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Identifier string `json:"identifier,omitempty"`
+	Password   string `json:"password" binding:"required"`
 }
 
 type ISPProfileRequest struct {
-	Name               string  `json:"name"`
-	Description        string  `json:"description"`
-	LogoURL            string  `json:"logo_url"`
-	CustomerCareNumber string  `json:"customer_care_number"`
-	AvgResponseTime    int     `json:"avg_response_time"`
-	AvgPrice           float64 `json:"avg_price"`
+	Name               string   `json:"name"`
+	DisplayName        string   `json:"display_name,omitempty"`
+	Description        string   `json:"description"`
+	LogoURL            string   `json:"logo_url"`
+	CustomerCareNumber string   `json:"customer_care_number"`
+	AvgResponseTime    int      `json:"avg_response_time"`
+	AvgPrice           float64  `json:"avg_price"`
+	County             string   `json:"county,omitempty"`
+	SubCounty          string   `json:"sub_county,omitempty"`
+	WorkingCounties    []string `json:"working_counties,omitempty"`
 }
 type ISPPackageRequest struct {
 	Name             string  `json:"name"`
 	Category         string  `json:"category"`
 	SpeedValue       float64 `json:"speed_value"`
-	SpeedUnitID      string  `json:"speed_unit_id"`
+	SpeedUnitID      string  `json:"speed_unit_id,omitempty"`
+	SpeedUnit        string  `json:"speed_unit,omitempty"`
 	BasePrice        float64 `json:"base_price"`
 	BillingCycle     string  `json:"billing_cycle"`
 	CapacityType     string  `json:"capacity_type"`
@@ -46,6 +54,7 @@ type ISPPackageRequest struct {
 	Description      string  `json:"description"`
 	IsActive         *bool   `json:"is_active,omitempty"`
 	Tier             string  `json:"tier,omitempty"`
+	SetupFee         float64 `json:"setup_fee,omitempty"`
 	OveragePrice     float64 `json:"overage_price,omitempty"`
 }
 type ISPPackagePriceRequest struct {
@@ -69,6 +78,18 @@ type VerifyOTPRequest struct {
 	OTP    string `json:"otp" binding:"required,len=6"`
 }
 
+type ForgotPasswordRequest struct {
+	Phone    string `json:"phone,omitempty"`
+	Username string `json:"username,omitempty"`
+}
+
+type ResetPasswordRequest struct {
+	UserID      string `json:"user_id,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	OTP         string `json:"otp" binding:"required,len=6"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
@@ -87,8 +108,21 @@ type UpdateDisplayNameRequest struct {
 }
 
 type ChangeAccountTypeRequest struct {
-	AccountType string `json:"account_type"`
-	Role        string `json:"role,omitempty"`
+	AccountType        string   `json:"account_type"`
+	Role               string   `json:"role,omitempty"`
+	Password           string   `json:"password,omitempty"`
+	Username           string   `json:"username,omitempty"`
+	DisplayName        string   `json:"display_name,omitempty"`
+	County             string   `json:"county,omitempty"`
+	Town               string   `json:"town,omitempty"`
+	Bio                string   `json:"bio,omitempty"`
+	PricePerHour       *float64 `json:"price_per_hour,omitempty"`
+	ExperienceYears    *int     `json:"experience_years,omitempty"`
+	Skills             []string `json:"skills,omitempty"`
+	CompanyName        string   `json:"company_name,omitempty"`
+	CustomerCareNumber string   `json:"customer_care_number,omitempty"`
+	Description        string   `json:"description,omitempty"`
+	LogoURL            string   `json:"logo_url,omitempty"`
 }
 
 func (r ChangeAccountTypeRequest) DesiredRole() string {
@@ -103,30 +137,30 @@ type UpdateTechnicianStatusRequest struct {
 }
 
 type FillMissingProfileRequest struct {
-	DisplayName        string       `json:"display_name,omitempty"`
-	Name               string       `json:"name,omitempty"`
-	Email              string       `json:"email,omitempty"`
-	AvatarURL          string       `json:"avatar_url,omitempty"`
-	County             string       `json:"county,omitempty"`
-	Town               string       `json:"town,omitempty"`
-	Village            string       `json:"village,omitempty"`
-	Location           *LocationDTO `json:"location,omitempty"`
+	DisplayName string       `json:"display_name,omitempty"`
+	Name        string       `json:"name,omitempty"`
+	Email       string       `json:"email,omitempty"`
+	AvatarURL   string       `json:"avatar_url,omitempty"`
+	County      string       `json:"county,omitempty"`
+	Town        string       `json:"town,omitempty"`
+	Village     string       `json:"village,omitempty"`
+	Location    *LocationDTO `json:"location,omitempty"`
 	// Technician specific fields
-	Bio                string       `json:"bio,omitempty"`
-	ExperienceYears    *int         `json:"experience_years,omitempty"`
-	PricePerHour       *float64     `json:"price_per_hour,omitempty"`
-	Skills             []string     `json:"skills,omitempty"`
-	IsAvailable        *bool        `json:"is_available,omitempty"`
+	Bio             string   `json:"bio,omitempty"`
+	ExperienceYears *int     `json:"experience_years,omitempty"`
+	PricePerHour    *float64 `json:"price_per_hour,omitempty"`
+	Skills          []string `json:"skills,omitempty"`
+	IsAvailable     *bool    `json:"is_available,omitempty"`
 	// ISP specific fields
-	LogoURL            string       `json:"logo_url,omitempty"`
-	CustomerCareNumber string       `json:"customer_care_number,omitempty"`
-	Description        string       `json:"description,omitempty"`
+	LogoURL            string `json:"logo_url,omitempty"`
+	CustomerCareNumber string `json:"customer_care_number,omitempty"`
+	Description        string `json:"description,omitempty"`
 	// Identity verification fields
-	IDPhotoURL         string       `json:"id_photo_url,omitempty"`
-	IDPhotoBackURL     string       `json:"id_photo_back_url,omitempty"`
-	IDNumber           string       `json:"id_number,omitempty"`
-	DocumentType       string       `json:"document_type,omitempty"`
-	VerificationNotes  string       `json:"verification_notes,omitempty"`
+	IDPhotoURL        string `json:"id_photo_url,omitempty"`
+	IDPhotoBackURL    string `json:"id_photo_back_url,omitempty"`
+	IDNumber          string `json:"id_number,omitempty"`
+	DocumentType      string `json:"document_type,omitempty"`
+	VerificationNotes string `json:"verification_notes,omitempty"`
 }
 
 type MissingFieldItem struct {
@@ -175,19 +209,20 @@ type CoverageRequest struct {
 }
 
 type JobRequestRequest struct {
-	RequestType        string  `json:"request_type"`
-	Mode               string  `json:"mode"`
-	TargetISPID        string  `json:"target_isp_id,omitempty"`
-	TargetTechnicianID string  `json:"target_technician_id,omitempty"`
-	LocationID         string  `json:"location_id,omitempty"`
-	County             string  `json:"county"`
-	Town               string  `json:"town"`
-	Village            string  `json:"village"`
-	ServiceType        string  `json:"service_type"`
-	SpeedMbps          int     `json:"speed_mbps,omitempty"`
-	Description        string  `json:"description"`
-	Budget             float64 `json:"budget"`
-	PreferredDate      string  `json:"preferred_date,omitempty"`
+	RequestType        string   `json:"request_type"`
+	Mode               string   `json:"mode"`
+	TargetISPID        string   `json:"target_isp_id,omitempty"`
+	TargetTechnicianID string   `json:"target_technician_id,omitempty"`
+	LocationID         string   `json:"location_id,omitempty"`
+	County             string   `json:"county"`
+	Town               string   `json:"town"`
+	Village            string   `json:"village"`
+	ServiceType        string   `json:"service_type"`
+	SpeedMbps          int      `json:"speed_mbps,omitempty"`
+	Description        string   `json:"description"`
+	PhotoURLs          []string `json:"photo_urls,omitempty"`
+	Budget             float64  `json:"budget"`
+	PreferredDate      string   `json:"preferred_date,omitempty"`
 }
 
 type JobApplicationRequest struct {
@@ -557,11 +592,10 @@ type GenerateJobPairingQRRequest struct {
 
 // ConfirmJobPairingRequest is submitted by the customer scanning the QR code.
 type ConfirmJobPairingRequest struct {
-	PairingID        string  `json:"pairing_id"`
-	Signature        string  `json:"signature,omitempty"`
-	VerificationCode string  `json:"verification_code,omitempty"`
-	ExpiresAt        int64   `json:"expires_at,omitempty"`
-	Notes            string  `json:"notes,omitempty"`
-	Rating           int     `json:"rating,omitempty"`
+	PairingID        string `json:"pairing_id"`
+	Signature        string `json:"signature,omitempty"`
+	VerificationCode string `json:"verification_code,omitempty"`
+	ExpiresAt        int64  `json:"expires_at,omitempty"`
+	Notes            string `json:"notes,omitempty"`
+	Rating           int    `json:"rating,omitempty"`
 }
-

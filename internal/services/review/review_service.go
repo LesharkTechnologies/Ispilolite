@@ -17,7 +17,7 @@ func (s *ReviewService) CreateReview(v *models.Review) error {
 	if v.Rating < 1 || v.Rating > 5 {
 		return fmt.Errorf("rating must be between 1 and 5")
 	}
-	photos, err := validation.CloudinaryURLs(v.PhotoURLs, 6)
+	photos, err := validation.MediaURLs(v.PhotoURLs, 6)
 	if err != nil {
 		return err
 	}

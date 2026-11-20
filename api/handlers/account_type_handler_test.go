@@ -145,7 +145,7 @@ func TestClientHandler_ChangeAccountType_Success(t *testing.T) {
 	}
 
 	// Change from customer (C) to technician (T)
-	body := `{"account_type": "technician"}`
+	body := `{"account_type": "technician", "password": "Password123!", "username": "alice_tech"}`
 	req := authRequest("PATCH", "/api/v1/my/account-type", body, "user-1", "customer")
 	w := httptest.NewRecorder()
 
@@ -196,7 +196,7 @@ func TestClientHandler_ChangeAccountType_Both_DualRole(t *testing.T) {
 	}
 
 	// Change to dual role: both (T & I)
-	body := `{"account_type": "both"}`
+	body := `{"account_type": "both", "password": "Password123!", "username": "bob_tech"}`
 	req := authRequest("PATCH", "/api/v1/my/account-type", body, "user-2", "customer")
 	w := httptest.NewRecorder()
 
@@ -229,7 +229,7 @@ func TestClientHandler_ChangeAccountType_Cooldown_24Hours(t *testing.T) {
 	}
 
 	// Try to switch within 24 hours (2 hours ago)
-	body := `{"account_type": "isp"}`
+	body := `{"account_type": "isp", "password": "Password123!", "username": "charlie_isp", "company_name": "Charlie Net"}`
 	req := authRequest("PATCH", "/api/v1/my/account-type", body, "user-cooldown", "technician")
 	w := httptest.NewRecorder()
 
@@ -489,7 +489,7 @@ func TestClientHandler_FillMissingProfile(t *testing.T) {
 		"display_name": "PeterFiberPro",
 		"county": "Kiambu",
 		"town": "Thika",
-		"avatar_url": "https://example.com/avatar.jpg"
+		"avatar_url": "https://media.ispilo.co.ke/profiles/avatar.jpg"
 	}`
 	req := authRequest("PATCH", "/api/v1/my/profile/fill-missing", body, "user-fill-1", "technician")
 	w := httptest.NewRecorder()

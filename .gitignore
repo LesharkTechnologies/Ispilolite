@@ -16,3 +16,14 @@ node_modules/
 backups/
 storage/
 *.log
+
+# Flutter app (do not commit)
+/ispiloliteapp/
+
+# Flutter build artifacts and caches
+.dart_tool/
+**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/

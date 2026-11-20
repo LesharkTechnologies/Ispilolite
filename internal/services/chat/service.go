@@ -45,7 +45,7 @@ func (s *Service) Send(ctx context.Context, jobID, senderID, body string, attach
 	if len(body) > 4000 {
 		return nil, ErrInvalid
 	}
-	urls, err := validation.CloudinaryURLs(attachments, 5)
+	urls, err := validation.MediaURLs(attachments, 5)
 	if err != nil {
 		return nil, err
 	}

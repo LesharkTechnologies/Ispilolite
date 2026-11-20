@@ -11,6 +11,7 @@ import (
 	"ispilolite/internal/repository"
 	"ispilolite/internal/services/matching"
 	"ispilolite/internal/utils"
+	"ispilolite/internal/validation"
 	"ispilolite/pkg/monitoring"
 	"ispilolite/pkg/queue"
 )
@@ -84,6 +85,11 @@ func (s *Service) Create(customerID string, job *models.JobRequest) (*models.Job
 	if strings.TrimSpace(job.ServiceType) == "" {
 		return nil, ErrInvalidRequest
 	}
+	photos, err := validation.MediaURLs(job.PhotoURLs, 6)
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	job.PhotoURLs = photos
 	job.IsAvailable = true
 	if err := s.repo.CreateJobRequest(job); err != nil {
 		monitoring.BusinessEvents.WithLabelValues("job.created", "error").Inc()

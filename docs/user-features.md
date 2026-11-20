@@ -6,17 +6,17 @@ All routes use `/api/v1`. Unless marked public, send an access-token header:
 Authorization: Bearer <access-token>
 ```
 
-## Media contract (Cloudinary)
+## Media contract (Cloudflare R2)
 
 The Go API does **not** receive or proxy image bytes. An authenticated client
 first calls `POST /media/upload-signature`, then uploads the file directly to
-Cloudinary using the returned `upload_params`, and finally sends the resulting
+Cloudflare R2 using the returned `upload_params`, and finally sends the resulting
 `secure_url` in existing `*_urls` fields. Flutter and browser JavaScript code
 is documented in [`docs/media-upload.md`](media-upload.md).
 
 The API validates the delivery host, stores the URL in PostgreSQL, and returns
-it on reads. Default allowed host: `res.cloudinary.com`; add Cloudinary custom
-CNAMEs with `CLOUDINARY_ALLOWED_HOSTS`. Upload signatures are scoped by media
+it on reads. Default allowed host: `media.ispilo.co.ke`; add Cloudflare R2 custom
+CNAMEs with `R2_ALLOWED_HOSTS`. Upload signatures are scoped by media
 kind and by the authenticated user's folder, so one account cannot sign writes
 into another account's folder.
 

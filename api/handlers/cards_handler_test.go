@@ -13,12 +13,12 @@ import (
 )
 
 type fakeCardsStore struct {
-	isps        []*models.ISPCard
-	techs       []*models.TechnicianCard
-	custs       []*models.CustomerWithJobsCard
-	jobs        []*models.JobCard
-	overview    *models.MarketplaceCardsOverview
-	err         error
+	isps     []*models.ISPCard
+	techs    []*models.TechnicianCard
+	custs    []*models.CustomerWithJobsCard
+	jobs     []*models.JobCard
+	overview *models.MarketplaceCardsOverview
+	err      error
 }
 
 func (f *fakeCardsStore) ListISPCards(ctx context.Context, county string, limit int) ([]*models.ISPCard, error) {
@@ -54,7 +54,7 @@ func TestCardsHandler_ListTechniciansWithDisplayNameAndIdentity(t *testing.T) {
 				IdentityLabel:  "identity [Collins Muthomi]",
 				IdentityStatus: "id_verified",
 				BadgeLabel:     "ID verified",
-				IconURL:        "https://example.com/avatar.jpg",
+				IconURL:        "https://media.ispilo.co.ke/profiles/avatar.jpg",
 				Rating:         4.9,
 				JobsDone:       34,
 				PricePerHour:   1500,

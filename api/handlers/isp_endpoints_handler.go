@@ -127,7 +127,7 @@ func (h *ISPEndpointsHandler) CreateTechnicianWorkRequest(w http.ResponseWriter,
 		respondWithError(w, 400, "target_technician_id and service_type are required")
 		return
 	}
-	job, err := h.jobRequestService.Create(userIDFromContext(r.Context()), &models.JobRequest{RequesterRole: "isp", RequestType: "technician_service", Mode: "direct", TechnicianID: req.TargetTechnicianID, ServiceType: req.ServiceType, Description: req.Description, County: req.County, Town: req.Town, Village: req.Village, Budget: req.Budget})
+	job, err := h.jobRequestService.Create(userIDFromContext(r.Context()), &models.JobRequest{RequesterRole: "isp", RequestType: "technician_service", Mode: "direct", TechnicianID: req.TargetTechnicianID, ServiceType: req.ServiceType, Description: req.Description, PhotoURLs: req.PhotoURLs, County: req.County, Town: req.Town, Village: req.Village, Budget: req.Budget})
 	if err != nil {
 		respondWithError(w, 400, err.Error())
 		return
@@ -279,14 +279,32 @@ func (h *ISPEndpointsHandler) UpdateProfile(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ispID := userIDFromContext(r.Context())
-	if err := h.ispService.UpdateISP(&models.ISP{ID: ispID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), LogoURL: strings.TrimSpace(req.LogoURL), CustomerCareNumber: strings.TrimSpace(req.CustomerCareNumber), AvgResponseTime: req.AvgResponseTime, AvgPrice: req.AvgPrice}); err != nil {
+	isp := &models.ISP{
+		ID:                 ispID,
+		Name:               strings.TrimSpace(req.Name),
+		DisplayName:        strings.TrimSpace(req.DisplayName),
+		Description:        strings.TrimSpace(req.Description),
+		LogoURL:            strings.TrimSpace(req.LogoURL),
+		CustomerCareNumber: strings.TrimSpace(req.CustomerCareNumber),
+		AvgResponseTime:    req.AvgResponseTime,
+		AvgPrice:           req.AvgPrice,
+		County:             strings.TrimSpace(req.County),
+		SubCounty:          strings.TrimSpace(req.SubCounty),
+	}
+	if err := h.ispService.UpdateISP(isp); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "failed to update isp profile")
 		return
 	}
 	if account, err := h.userService.GetUserByID(ispID); err == nil {
 		account.Name = strings.TrimSpace(req.Name)
+		if strings.TrimSpace(req.DisplayName) != "" {
+			account.DisplayName = strings.TrimSpace(req.DisplayName)
+		}
 		if strings.TrimSpace(req.LogoURL) != "" {
 			account.AvatarURL = strings.TrimSpace(req.LogoURL)
+		}
+		if strings.TrimSpace(req.County) != "" {
+			account.County = strings.TrimSpace(req.County)
 		}
 		account.UpdatedAt = time.Now().UTC()
 		if err := h.userService.UpdateUser(account); err != nil {
@@ -294,7 +312,24 @@ func (h *ISPEndpointsHandler) UpdateProfile(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	if len(req.WorkingCounties) > 0 {
+		_ = h.ispService.SetWorkingCounties(ispID, req.WorkingCounties)
+	}
 	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Message: "isp profile updated"})
+}
+
+// ListMyPackages returns internet packages belonging to the authenticated ISP.
+func (h *ISPEndpointsHandler) ListMyPackages(w http.ResponseWriter, r *http.Request) {
+	ispID := userIDFromContext(r.Context())
+	packages, err := h.ispService.GetISPPackages(ispID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to list packages")
+		return
+	}
+	if packages == nil {
+		packages = []*models.ISPPackage{}
+	}
+	respondWithJSON(w, http.StatusOK, dto.APIResponse{Success: true, Data: packages})
 }
 
 // GetInstallations returns a list of the ISP's installations.

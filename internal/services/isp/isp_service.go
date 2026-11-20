@@ -39,7 +39,7 @@ func (s *ISPService) GetISPPackages(ispID string) ([]*models.ISPPackage, error) 
 
 func (s *ISPService) UpdateISP(isp *models.ISP) error {
 	if strings.TrimSpace(isp.LogoURL) != "" {
-		urls, err := validation.CloudinaryURLs([]string{isp.LogoURL}, 1)
+		urls, err := validation.MediaURLs([]string{isp.LogoURL}, 1)
 		if err != nil {
 			return err
 		}
@@ -129,29 +129,44 @@ func (s *ISPService) RecordUsage(subscriptionID, ispID, externalRef string, valu
 	return s.ispRepo.RecordPackageUsage(&models.PackageUsageEvent{ID: utils.GenerateID(), SubscriptionID: subscriptionID,
 		ISPID: ispID, UsageValue: value, ExternalRef: strings.TrimSpace(externalRef), MeasuredAt: measuredAt})
 }
+func (s *ISPService) SetWorkingCounties(ispID string, counties []string) error {
+	return s.ispRepo.SetWorkingCounties(ispID, counties)
+}
+
 func validatePackage(pkg *models.ISPPackage) error {
 	pkg.Name = strings.TrimSpace(pkg.Name)
 	pkg.Category = strings.ToLower(strings.TrimSpace(pkg.Category))
 	pkg.BillingCycle = strings.ToLower(strings.TrimSpace(pkg.BillingCycle))
 	pkg.CapacityType = strings.ToLower(strings.TrimSpace(pkg.CapacityType))
 	pkg.Tier = strings.ToLower(strings.TrimSpace(pkg.Tier))
-	if pkg.Name == "" || pkg.SpeedValue <= 0 || pkg.SpeedUnitID == "" || pkg.BasePrice < 0 {
-		return fmt.Errorf("name, positive speed, speed unit, and non-negative price are required")
+	if pkg.Category == "home" {
+		pkg.Category = "pppoe"
+		if pkg.Tier == "" {
+			pkg.Tier = "home"
+		}
+	} else if pkg.Category == "business" {
+		pkg.Category = "pppoe"
+		if pkg.Tier == "" {
+			pkg.Tier = "business"
+		}
+	}
+	if pkg.Name == "" || pkg.SpeedValue <= 0 || pkg.BasePrice < 0 {
+		return fmt.Errorf("name, positive speed, and non-negative price are required")
 	}
 	if pkg.Category != "pppoe" && pkg.Category != "hotspot" {
-		return fmt.Errorf("category must be pppoe or hotspot")
+		pkg.Category = "pppoe"
 	}
 	if pkg.BillingCycle == "" {
 		pkg.BillingCycle = "monthly"
 	}
 	if pkg.BillingCycle != "weekly" && pkg.BillingCycle != "monthly" && pkg.BillingCycle != "yearly" {
-		return fmt.Errorf("billing_cycle must be weekly, monthly, or yearly")
+		pkg.BillingCycle = "monthly"
 	}
 	if pkg.Tier == "" {
 		pkg.Tier = "basic"
 	}
-	if pkg.Tier != "basic" && pkg.Tier != "pro" && pkg.Tier != "enterprise" && pkg.Tier != "custom" {
-		return fmt.Errorf("tier must be basic, pro, enterprise, or custom")
+	if pkg.Tier != "basic" && pkg.Tier != "pro" && pkg.Tier != "enterprise" && pkg.Tier != "custom" && pkg.Tier != "home" && pkg.Tier != "business" {
+		pkg.Tier = "basic"
 	}
 	if pkg.OveragePrice < 0 {
 		return fmt.Errorf("overage_price cannot be negative")

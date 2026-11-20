@@ -64,7 +64,7 @@ func (r *BillingRepository) load(ctx context.Context, where string, arg interfac
 	var pricingUpdated sql.NullTime
 	err := r.db.QueryRowContext(ctx, `SELECT id,owner_id,name,slug,logo_url,description,owner_company,owner_phone,support_phone,support_whatsapp,support_email,support_hours,website_url,login_url,referral_url,pricing_updated_at,status,domain_verified,business_verified,created_at,updated_at,
 		(SELECT count(*) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id),
-		(SELECT COALESCE(avg((reliability+ease_of_use+support+features+value_for_money)/5.0),0) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id),
+		(SELECT COALESCE(avg((reliability+ease_of_use+support+features+value_for_money)/5.0),0) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id) AS average_rating,
 		(SELECT count(*) FROM user_follows WHERE followee_id=billing_systems.id)
 		FROM billing_systems WHERE `+where, arg).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Slug, &item.LogoURL, &item.Description, &item.OwnerCompany, &item.OwnerPhone, &item.SupportPhone, &item.SupportWhatsApp, &item.SupportEmail, &item.SupportHours, &item.WebsiteURL, &item.LoginURL, &item.ReferralURL, &pricingUpdated, &item.Status, &item.DomainVerified, &item.BusinessVerified, &item.CreatedAt, &item.UpdatedAt, &item.ReviewCount, &item.AverageRating, &item.FollowerCount)
 	if err != nil {
@@ -87,7 +87,7 @@ func (r *BillingRepository) List(ctx context.Context, query, serviceType string,
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT id,owner_id,name,slug,logo_url,description,owner_company,owner_phone,support_phone,support_whatsapp,support_email,support_hours,website_url,login_url,referral_url,pricing_updated_at,status,domain_verified,business_verified,created_at,updated_at,
 		(SELECT count(*) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id),
-		(SELECT COALESCE(avg((reliability+ease_of_use+support+features+value_for_money)/5.0),0) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id),
+		(SELECT COALESCE(avg((reliability+ease_of_use+support+features+value_for_money)/5.0),0) FROM billing_system_reviews WHERE billing_system_id=billing_systems.id) AS average_rating,
 		(SELECT count(*) FROM user_follows WHERE followee_id=billing_systems.id),
 		count(*) OVER()
 		FROM billing_systems WHERE status='active' AND ($1='' OR name ILIKE '%'||$1||'%' OR description ILIKE '%'||$1||'%')

@@ -14,7 +14,7 @@ import (
 )
 
 // RealtimeHandler exposes job-scoped status streams and technician tracking.
-// Media is not accepted here; all photo uploads remain client-to-Cloudinary.
+// Media is not accepted here; clients upload directly with an R2 presigned URL.
 type RealtimeHandler struct {
 	service *realtimesvc.Service
 }

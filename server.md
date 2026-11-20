@@ -87,7 +87,7 @@ CONFIG_PATH=config/config.yaml
 JWT_SECRET=<64-char random string>
 JWT_ISSUER=ispilolite
 JWT_ACCESS_TTL=15m
-JWT_REFRESH_TTL=168h
+JWT_REFRESH_TTL=8760h
 
 # Postgres (writer + reader)
 DATABASE_URL=postgres://user:pass@writer:5432/ispilolite?sslmode=require

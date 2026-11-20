@@ -16,18 +16,18 @@ import (
 )
 
 type fakeIdentityStore struct {
-	created          *models.IdentityVerification
-	approvedID       string
-	approvedName     string
-	approvedBadge    string
-	approvedAdminID  string
-	rejectedID       string
-	rejectedReason   string
-	rejectedAdminID  string
-	err              error
-	itemToReturn     *models.IdentityVerification
-	listItems        []*models.IdentityVerification
-	listTotal        int
+	created         *models.IdentityVerification
+	approvedID      string
+	approvedName    string
+	approvedBadge   string
+	approvedAdminID string
+	rejectedID      string
+	rejectedReason  string
+	rejectedAdminID string
+	err             error
+	itemToReturn    *models.IdentityVerification
+	listItems       []*models.IdentityVerification
+	listTotal       int
 }
 
 func (s *fakeIdentityStore) CreateVerification(_ context.Context, item *models.IdentityVerification) error {
@@ -109,9 +109,9 @@ type fakeUserRepoForIdentity struct {
 	err  error
 }
 
-func (r *fakeUserRepoForIdentity) CreateUser(*models.User) error                         { return nil }
-func (r *fakeUserRepoForIdentity) GetUserByPhone(string) (*models.User, error)          { return nil, nil }
-func (r *fakeUserRepoForIdentity) GetUserByUsername(string) (*models.User, error)       { return nil, nil }
+func (r *fakeUserRepoForIdentity) CreateUser(*models.User) error                  { return nil }
+func (r *fakeUserRepoForIdentity) GetUserByPhone(string) (*models.User, error)    { return nil, nil }
+func (r *fakeUserRepoForIdentity) GetUserByUsername(string) (*models.User, error) { return nil, nil }
 func (r *fakeUserRepoForIdentity) GetUserByID(userID string) (*models.User, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -121,20 +121,28 @@ func (r *fakeUserRepoForIdentity) GetUserByID(userID string) (*models.User, erro
 	}
 	return nil, errors.New("user not found")
 }
-func (r *fakeUserRepoForIdentity) UpdateUser(*models.User) error                                  { return nil }
-func (r *fakeUserRepoForIdentity) SetDisplayName(string, string) error                           { return nil }
-func (r *fakeUserRepoForIdentity) ChangeAccountType(string, string, bool) error                  { return nil }
-func (r *fakeUserRepoForIdentity) SetUserStatus(string, string) error                            { return nil }
-func (r *fakeUserRepoForIdentity) SetISPTechnicianStatus(string, string, string) error           { return nil }
-func (r *fakeUserRepoForIdentity) GetTechniciansByISPID(string) ([]*models.User, error)           { return nil, nil }
-func (r *fakeUserRepoForIdentity) GetUsersByStatus(string) ([]*models.User, error)                { return nil, nil }
-func (r *fakeUserRepoForIdentity) ListUsersForMessaging(string, []string) ([]*models.User, error) { return nil, nil }
-func (r *fakeUserRepoForIdentity) RequestDeleteUser(string, string) error                         { return nil }
-func (r *fakeUserRepoForIdentity) SanitizeAndDeleteUser(string) error                             { return nil }
-func (r *fakeUserRepoForIdentity) PurgeExpiredUsers() (int64, error)                              { return 0, nil }
-func (r *fakeUserRepoForIdentity) CreateRefreshSession(string, string, string, time.Time) error   { return nil }
-func (r *fakeUserRepoForIdentity) RefreshSessionActive(string, string) (bool, error)              { return true, nil }
-func (r *fakeUserRepoForIdentity) RevokeAllRefreshSessions(string) error                          { return nil }
+func (r *fakeUserRepoForIdentity) UpdateUser(*models.User) error                       { return nil }
+func (r *fakeUserRepoForIdentity) SetDisplayName(string, string) error                 { return nil }
+func (r *fakeUserRepoForIdentity) ChangeAccountType(string, string, bool) error        { return nil }
+func (r *fakeUserRepoForIdentity) SetUserStatus(string, string) error                  { return nil }
+func (r *fakeUserRepoForIdentity) SetISPTechnicianStatus(string, string, string) error { return nil }
+func (r *fakeUserRepoForIdentity) GetTechniciansByISPID(string) ([]*models.User, error) {
+	return nil, nil
+}
+func (r *fakeUserRepoForIdentity) GetUsersByStatus(string) ([]*models.User, error) { return nil, nil }
+func (r *fakeUserRepoForIdentity) ListUsersForMessaging(string, []string) ([]*models.User, error) {
+	return nil, nil
+}
+func (r *fakeUserRepoForIdentity) RequestDeleteUser(string, string) error { return nil }
+func (r *fakeUserRepoForIdentity) SanitizeAndDeleteUser(string) error     { return nil }
+func (r *fakeUserRepoForIdentity) PurgeExpiredUsers() (int64, error)      { return 0, nil }
+func (r *fakeUserRepoForIdentity) CreateRefreshSession(string, string, string, time.Time) error {
+	return nil
+}
+func (r *fakeUserRepoForIdentity) RefreshSessionActive(string, string) (bool, error) {
+	return true, nil
+}
+func (r *fakeUserRepoForIdentity) RevokeAllRefreshSessions(string) error { return nil }
 
 func authRequest(method, path, body, userID, role string) *http.Request {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -156,7 +164,7 @@ func TestSubmitIdentityVerification_UnverifiedPhone(t *testing.T) {
 	h := newIdentityVerificationHandlerWithDeps(store, users)
 
 	rec := httptest.NewRecorder()
-	req := authRequest("POST", "/api/v1/identity/verify", `{"id_photo_url":"https://example.com/id.jpg"}`, "tech-1", "technician")
+	req := authRequest("POST", "/api/v1/identity/verify", `{"id_photo_url":"https://media.ispilo.co.ke/identity/id.jpg"}`, "tech-1", "technician")
 	h.Submit(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -181,7 +189,7 @@ func TestSubmitIdentityVerification_SuccessLinksVerifiedPhone(t *testing.T) {
 	h := newIdentityVerificationHandlerWithDeps(store, users)
 
 	rec := httptest.NewRecorder()
-	payload := `{"id_photo_url":"https://example.com/my-id.jpg","document_type":"national_id","id_number":"12345678"}`
+	payload := `{"id_photo_url":"https://media.ispilo.co.ke/identity/my-id.jpg","document_type":"national_id","id_number":"12345678"}`
 	req := authRequest("POST", "/api/v1/identity/verify", payload, "tech-1", "technician")
 	h.Submit(rec, req)
 
@@ -195,8 +203,8 @@ func TestSubmitIdentityVerification_SuccessLinksVerifiedPhone(t *testing.T) {
 	if store.created.Phone != "+254712345678" {
 		t.Fatalf("expected phone '+254712345678', got %q", store.created.Phone)
 	}
-	if store.created.IDPhotoURL != "https://example.com/my-id.jpg" {
-		t.Fatalf("expected photo URL 'https://example.com/my-id.jpg', got %q", store.created.IDPhotoURL)
+	if store.created.IDPhotoURL != "https://media.ispilo.co.ke/identity/my-id.jpg" {
+		t.Fatalf("expected photo URL 'https://media.ispilo.co.ke/identity/my-id.jpg', got %q", store.created.IDPhotoURL)
 	}
 	if store.created.Status != models.VerificationStatusPending {
 		t.Fatalf("expected pending status, got %q", store.created.Status)

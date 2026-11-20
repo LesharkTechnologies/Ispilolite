@@ -15,6 +15,7 @@ import (
 	"ispilolite/internal/models"
 	"ispilolite/internal/repository"
 	"ispilolite/internal/repository/postgres"
+	"ispilolite/internal/validation"
 )
 
 type identityVerificationStore interface {
@@ -88,6 +89,20 @@ func (h *IdentityVerificationHandler) Submit(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "id_photo_url is too long")
 		return
 	}
+	documentURLs := []string{photoURL}
+	if back := strings.TrimSpace(req.IDPhotoBackURL); back != "" {
+		documentURLs = append(documentURLs, back)
+	}
+	documentURLs, err = validation.MediaURLs(documentURLs, 2)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	photoURL = documentURLs[0]
+	backURL := ""
+	if len(documentURLs) > 1 {
+		backURL = documentURLs[1]
+	}
 
 	docType := strings.ToLower(strings.TrimSpace(req.DocumentType))
 	if docType == "" {
@@ -105,7 +120,7 @@ func (h *IdentityVerificationHandler) Submit(w http.ResponseWriter, r *http.Requ
 		UserID:            user.ID,
 		Phone:             user.Phone, // Linked directly to the verified account's phone number!
 		IDPhotoURL:        photoURL,
-		IDPhotoBackURL:    strings.TrimSpace(req.IDPhotoBackURL),
+		IDPhotoBackURL:    backURL,
 		IDNumber:          strings.TrimSpace(req.IDNumber),
 		DocumentType:      docType,
 		Status:            models.VerificationStatusPending,

@@ -33,7 +33,7 @@ func (s *Service) Create(ctx context.Context, jobID, userID, reason, description
 	if reason == "" || description == "" {
 		return nil, ErrInvalid
 	}
-	evidence, err := validation.CloudinaryURLs(urls, 10)
+	evidence, err := validation.MediaURLs(urls, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *Service) List(ctx context.Context, status string, limit int) ([]*models
 	return s.repo.List(ctx, strings.ToLower(status), limit)
 }
 func (s *Service) Comment(ctx context.Context, id, userID, body string, urls []string) (*models.DisputeComment, error) {
-	evidence, err := validation.CloudinaryURLs(urls, 10)
+	evidence, err := validation.MediaURLs(urls, 10)
 	if err != nil {
 		return nil, err
 	}
