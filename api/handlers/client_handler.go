@@ -303,7 +303,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "phone", Label: "Phone Number", Category: "profile",
 			Description: "Account phone number is required for verification",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -314,7 +314,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "name", Label: "Full Name", Category: "profile",
 			Description: "Your legal name",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -325,7 +325,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "display_name", Label: "Display Name / Moniker", Category: "profile",
 			Description: "Public moniker shown on discovery cards (e.g. 'Leshark')",
-			Endpoint: "/api/v1/my/display-name", Method: "PATCH",
+			Endpoint:    "/api/v1/my/display-name", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -336,7 +336,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "avatar_url", Label: "Profile Picture / Avatar", Category: "profile",
 			Description: "Upload a profile photo via /media/upload?kind=profile",
-			Endpoint: "/api/v1/media/upload?kind=profile", Method: "POST",
+			Endpoint:    "/api/v1/media/upload?kind=profile", Method: "POST",
 		})
 	}
 	report.TotalRequired++
@@ -347,7 +347,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 		report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 			Field: "location", Label: "County & Town", Category: "location",
 			Description: "Location to match nearby clients and jobs",
-			Endpoint: "/api/v1/my/profile", Method: "PATCH",
+			Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 		})
 	}
 	report.TotalRequired++
@@ -364,7 +364,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "id_photo_url", Label: "Identity Verification Document", Category: "identity",
 				Description: "Upload ID photo/passport or business permit to receive verified badge",
-				Endpoint: "/api/v1/identity/verify", Method: "POST",
+				Endpoint:    "/api/v1/identity/verify", Method: "POST",
 			})
 		}
 	}
@@ -389,7 +389,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "bio", Label: "Technician Bio / Experience", Category: "services",
 				Description: "Describe your experience, past installations, and specialties",
-				Endpoint: "/api/v1/my/portfolio/profile", Method: "PUT",
+				Endpoint:    "/api/v1/my/portfolio/profile", Method: "PUT",
 			})
 		}
 
@@ -399,7 +399,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "price_per_hour", Label: "Hourly Service Rate (KES)", Category: "services",
 				Description: "Set your hourly rate for marketplace card display",
-				Endpoint: "/api/v1/my/portfolio/profile", Method: "PUT",
+				Endpoint:    "/api/v1/my/portfolio/profile", Method: "PUT",
 			})
 		}
 
@@ -409,7 +409,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "skills", Label: "Technical Skills", Category: "services",
 				Description: "Add skills (fiber, wifi, cctv, splicing, networking)",
-				Endpoint: "/api/v1/my/skills", Method: "POST",
+				Endpoint:    "/api/v1/my/skills", Method: "POST",
 			})
 		}
 	}
@@ -429,7 +429,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "logo_url", Label: "Company Logo", Category: "profile",
 				Description: "Upload your company logo via /media/upload?kind=isp_logo",
-				Endpoint: "/api/v1/media/upload?kind=isp_logo", Method: "POST",
+				Endpoint:    "/api/v1/media/upload?kind=isp_logo", Method: "POST",
 			})
 		}
 
@@ -439,7 +439,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "customer_care_number", Label: "Customer Care Phone", Category: "profile",
 				Description: "Customer support helpline number",
-				Endpoint: "/api/v1/my/profile", Method: "PATCH",
+				Endpoint:    "/api/v1/my/profile", Method: "PATCH",
 			})
 		}
 
@@ -449,7 +449,7 @@ func (h *ClientHandler) computeCompletionReport(ctx context.Context, u *models.U
 			report.MissingFields = append(report.MissingFields, dto.MissingFieldItem{
 				Field: "packages", Label: "Internet Packages", Category: "services",
 				Description: "Publish at least one internet package",
-				Endpoint: "/api/v1/my/packages", Method: "POST",
+				Endpoint:    "/api/v1/my/packages", Method: "POST",
 			})
 		}
 	}

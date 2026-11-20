@@ -16,18 +16,18 @@ import (
 )
 
 type fakeIdentityStore struct {
-	created          *models.IdentityVerification
-	approvedID       string
-	approvedName     string
-	approvedBadge    string
-	approvedAdminID  string
-	rejectedID       string
-	rejectedReason   string
-	rejectedAdminID  string
-	err              error
-	itemToReturn     *models.IdentityVerification
-	listItems        []*models.IdentityVerification
-	listTotal        int
+	created         *models.IdentityVerification
+	approvedID      string
+	approvedName    string
+	approvedBadge   string
+	approvedAdminID string
+	rejectedID      string
+	rejectedReason  string
+	rejectedAdminID string
+	err             error
+	itemToReturn    *models.IdentityVerification
+	listItems       []*models.IdentityVerification
+	listTotal       int
 }
 
 func (s *fakeIdentityStore) CreateVerification(_ context.Context, item *models.IdentityVerification) error {
@@ -109,9 +109,9 @@ type fakeUserRepoForIdentity struct {
 	err  error
 }
 
-func (r *fakeUserRepoForIdentity) CreateUser(*models.User) error                         { return nil }
-func (r *fakeUserRepoForIdentity) GetUserByPhone(string) (*models.User, error)          { return nil, nil }
-func (r *fakeUserRepoForIdentity) GetUserByUsername(string) (*models.User, error)       { return nil, nil }
+func (r *fakeUserRepoForIdentity) CreateUser(*models.User) error                  { return nil }
+func (r *fakeUserRepoForIdentity) GetUserByPhone(string) (*models.User, error)    { return nil, nil }
+func (r *fakeUserRepoForIdentity) GetUserByUsername(string) (*models.User, error) { return nil, nil }
 func (r *fakeUserRepoForIdentity) GetUserByID(userID string) (*models.User, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -121,20 +121,28 @@ func (r *fakeUserRepoForIdentity) GetUserByID(userID string) (*models.User, erro
 	}
 	return nil, errors.New("user not found")
 }
-func (r *fakeUserRepoForIdentity) UpdateUser(*models.User) error                                  { return nil }
-func (r *fakeUserRepoForIdentity) SetDisplayName(string, string) error                           { return nil }
-func (r *fakeUserRepoForIdentity) ChangeAccountType(string, string, bool) error                  { return nil }
-func (r *fakeUserRepoForIdentity) SetUserStatus(string, string) error                            { return nil }
-func (r *fakeUserRepoForIdentity) SetISPTechnicianStatus(string, string, string) error           { return nil }
-func (r *fakeUserRepoForIdentity) GetTechniciansByISPID(string) ([]*models.User, error)           { return nil, nil }
-func (r *fakeUserRepoForIdentity) GetUsersByStatus(string) ([]*models.User, error)                { return nil, nil }
-func (r *fakeUserRepoForIdentity) ListUsersForMessaging(string, []string) ([]*models.User, error) { return nil, nil }
-func (r *fakeUserRepoForIdentity) RequestDeleteUser(string, string) error                         { return nil }
-func (r *fakeUserRepoForIdentity) SanitizeAndDeleteUser(string) error                             { return nil }
-func (r *fakeUserRepoForIdentity) PurgeExpiredUsers() (int64, error)                              { return 0, nil }
-func (r *fakeUserRepoForIdentity) CreateRefreshSession(string, string, string, time.Time) error   { return nil }
-func (r *fakeUserRepoForIdentity) RefreshSessionActive(string, string) (bool, error)              { return true, nil }
-func (r *fakeUserRepoForIdentity) RevokeAllRefreshSessions(string) error                          { return nil }
+func (r *fakeUserRepoForIdentity) UpdateUser(*models.User) error                       { return nil }
+func (r *fakeUserRepoForIdentity) SetDisplayName(string, string) error                 { return nil }
+func (r *fakeUserRepoForIdentity) ChangeAccountType(string, string, bool) error        { return nil }
+func (r *fakeUserRepoForIdentity) SetUserStatus(string, string) error                  { return nil }
+func (r *fakeUserRepoForIdentity) SetISPTechnicianStatus(string, string, string) error { return nil }
+func (r *fakeUserRepoForIdentity) GetTechniciansByISPID(string) ([]*models.User, error) {
+	return nil, nil
+}
+func (r *fakeUserRepoForIdentity) GetUsersByStatus(string) ([]*models.User, error) { return nil, nil }
+func (r *fakeUserRepoForIdentity) ListUsersForMessaging(string, []string) ([]*models.User, error) {
+	return nil, nil
+}
+func (r *fakeUserRepoForIdentity) RequestDeleteUser(string, string) error { return nil }
+func (r *fakeUserRepoForIdentity) SanitizeAndDeleteUser(string) error     { return nil }
+func (r *fakeUserRepoForIdentity) PurgeExpiredUsers() (int64, error)      { return 0, nil }
+func (r *fakeUserRepoForIdentity) CreateRefreshSession(string, string, string, time.Time) error {
+	return nil
+}
+func (r *fakeUserRepoForIdentity) RefreshSessionActive(string, string) (bool, error) {
+	return true, nil
+}
+func (r *fakeUserRepoForIdentity) RevokeAllRefreshSessions(string) error { return nil }
 
 func authRequest(method, path, body, userID, role string) *http.Request {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))

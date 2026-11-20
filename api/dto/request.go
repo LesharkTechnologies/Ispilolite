@@ -103,30 +103,30 @@ type UpdateTechnicianStatusRequest struct {
 }
 
 type FillMissingProfileRequest struct {
-	DisplayName        string       `json:"display_name,omitempty"`
-	Name               string       `json:"name,omitempty"`
-	Email              string       `json:"email,omitempty"`
-	AvatarURL          string       `json:"avatar_url,omitempty"`
-	County             string       `json:"county,omitempty"`
-	Town               string       `json:"town,omitempty"`
-	Village            string       `json:"village,omitempty"`
-	Location           *LocationDTO `json:"location,omitempty"`
+	DisplayName string       `json:"display_name,omitempty"`
+	Name        string       `json:"name,omitempty"`
+	Email       string       `json:"email,omitempty"`
+	AvatarURL   string       `json:"avatar_url,omitempty"`
+	County      string       `json:"county,omitempty"`
+	Town        string       `json:"town,omitempty"`
+	Village     string       `json:"village,omitempty"`
+	Location    *LocationDTO `json:"location,omitempty"`
 	// Technician specific fields
-	Bio                string       `json:"bio,omitempty"`
-	ExperienceYears    *int         `json:"experience_years,omitempty"`
-	PricePerHour       *float64     `json:"price_per_hour,omitempty"`
-	Skills             []string     `json:"skills,omitempty"`
-	IsAvailable        *bool        `json:"is_available,omitempty"`
+	Bio             string   `json:"bio,omitempty"`
+	ExperienceYears *int     `json:"experience_years,omitempty"`
+	PricePerHour    *float64 `json:"price_per_hour,omitempty"`
+	Skills          []string `json:"skills,omitempty"`
+	IsAvailable     *bool    `json:"is_available,omitempty"`
 	// ISP specific fields
-	LogoURL            string       `json:"logo_url,omitempty"`
-	CustomerCareNumber string       `json:"customer_care_number,omitempty"`
-	Description        string       `json:"description,omitempty"`
+	LogoURL            string `json:"logo_url,omitempty"`
+	CustomerCareNumber string `json:"customer_care_number,omitempty"`
+	Description        string `json:"description,omitempty"`
 	// Identity verification fields
-	IDPhotoURL         string       `json:"id_photo_url,omitempty"`
-	IDPhotoBackURL     string       `json:"id_photo_back_url,omitempty"`
-	IDNumber           string       `json:"id_number,omitempty"`
-	DocumentType       string       `json:"document_type,omitempty"`
-	VerificationNotes  string       `json:"verification_notes,omitempty"`
+	IDPhotoURL        string `json:"id_photo_url,omitempty"`
+	IDPhotoBackURL    string `json:"id_photo_back_url,omitempty"`
+	IDNumber          string `json:"id_number,omitempty"`
+	DocumentType      string `json:"document_type,omitempty"`
+	VerificationNotes string `json:"verification_notes,omitempty"`
 }
 
 type MissingFieldItem struct {
@@ -557,11 +557,10 @@ type GenerateJobPairingQRRequest struct {
 
 // ConfirmJobPairingRequest is submitted by the customer scanning the QR code.
 type ConfirmJobPairingRequest struct {
-	PairingID        string  `json:"pairing_id"`
-	Signature        string  `json:"signature,omitempty"`
-	VerificationCode string  `json:"verification_code,omitempty"`
-	ExpiresAt        int64   `json:"expires_at,omitempty"`
-	Notes            string  `json:"notes,omitempty"`
-	Rating           int     `json:"rating,omitempty"`
+	PairingID        string `json:"pairing_id"`
+	Signature        string `json:"signature,omitempty"`
+	VerificationCode string `json:"verification_code,omitempty"`
+	ExpiresAt        int64  `json:"expires_at,omitempty"`
+	Notes            string `json:"notes,omitempty"`
+	Rating           int    `json:"rating,omitempty"`
 }
-

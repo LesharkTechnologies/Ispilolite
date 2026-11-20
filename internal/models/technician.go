@@ -13,22 +13,22 @@ type Technician struct {
 	Phone     string `json:"-" db:"phone"`
 	Email     string `json:"-" db:"email"`
 	// Foreign key to isps table
-	ISPName     string    `json:"isp_name,omitempty" db:"isp_name"`       // Denormalized for search convenience
-	LocationID  string    `json:"location_id,omitempty" db:"location_id"` // Foreign key to locations table
-	County      string    `json:"county" db:"county"`
-	SubCounty   string    `json:"sub_county" db:"sub_county"`
-	Village     string    `json:"village" db:"village"`
-	Point       *GeoPoint `json:"point,omitempty" db:"-"`
-	Location    *GeoPoint `json:"location,omitempty" db:"-"`
-	Rating      float64   `json:"rating" db:"rating"`
-	ReviewCount int       `json:"review_count" db:"review_count"`
-	JobsDone    int       `json:"jobs_done" db:"jobs_done"`
-	IsAvailable bool      `json:"is_available" db:"is_available"`
-	IdentityStatus string `json:"identity_status" db:"identity_status"`
-	VerifiedName   string `json:"verified_name,omitempty" db:"verified_name"`
-	DisplayName    string `json:"display_name,omitempty" db:"display_name"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	ISPName        string    `json:"isp_name,omitempty" db:"isp_name"`       // Denormalized for search convenience
+	LocationID     string    `json:"location_id,omitempty" db:"location_id"` // Foreign key to locations table
+	County         string    `json:"county" db:"county"`
+	SubCounty      string    `json:"sub_county" db:"sub_county"`
+	Village        string    `json:"village" db:"village"`
+	Point          *GeoPoint `json:"point,omitempty" db:"-"`
+	Location       *GeoPoint `json:"location,omitempty" db:"-"`
+	Rating         float64   `json:"rating" db:"rating"`
+	ReviewCount    int       `json:"review_count" db:"review_count"`
+	JobsDone       int       `json:"jobs_done" db:"jobs_done"`
+	IsAvailable    bool      `json:"is_available" db:"is_available"`
+	IdentityStatus string    `json:"identity_status" db:"identity_status"`
+	VerifiedName   string    `json:"verified_name,omitempty" db:"verified_name"`
+	DisplayName    string    `json:"display_name,omitempty" db:"display_name"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 
 	// Roles and Skills are loaded from join tables (technician_roles, technician_skills)
 	Roles  []string `json:"roles" db:"-"`
@@ -79,6 +79,7 @@ func (t *Technician) IdentityLabel() string {
 	}
 	return "identity [" + legal + "]"
 }
+
 type TechnicianPost struct {
 	ID           string    `json:"id" db:"id"`
 	TechnicianID string    `json:"technician_id" db:"technician_id"`
