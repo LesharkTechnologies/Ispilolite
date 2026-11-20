@@ -10,7 +10,9 @@ type UserService struct{ repo repository.UserRepository }
 func NewUserService(repo repository.UserRepository) *UserService   { return &UserService{repo: repo} }
 func (s *UserService) GetUserByID(id string) (*models.User, error) { return s.repo.GetUserByID(id) }
 func (s *UserService) UpdateUser(user *models.User) error          { return s.repo.UpdateUser(user) }
-func (s *UserService) SetDisplayName(id, displayName string) error { return s.repo.SetDisplayName(id, displayName) }
+func (s *UserService) SetDisplayName(id, displayName string) error {
+	return s.repo.SetDisplayName(id, displayName)
+}
 func (s *UserService) ChangeAccountType(id, targetRole string, bypassCooldown bool) error {
 	return s.repo.ChangeAccountType(id, targetRole, bypassCooldown)
 }

@@ -13,12 +13,12 @@ import (
 )
 
 type fakeCardsStore struct {
-	isps        []*models.ISPCard
-	techs       []*models.TechnicianCard
-	custs       []*models.CustomerWithJobsCard
-	jobs        []*models.JobCard
-	overview    *models.MarketplaceCardsOverview
-	err         error
+	isps     []*models.ISPCard
+	techs    []*models.TechnicianCard
+	custs    []*models.CustomerWithJobsCard
+	jobs     []*models.JobCard
+	overview *models.MarketplaceCardsOverview
+	err      error
 }
 
 func (f *fakeCardsStore) ListISPCards(ctx context.Context, county string, limit int) ([]*models.ISPCard, error) {
