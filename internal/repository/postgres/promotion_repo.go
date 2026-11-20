@@ -527,9 +527,9 @@ func (r *PromotionRepository) CreateEnquiry(ctx context.Context, promotionID, us
 	}
 	err := r.writer.QueryRowContext(ctx, `INSERT INTO promotion_enquiries(id,promotion_id,user_id,name,phone,email,message,consent,status,created_at,updated_at)
 		SELECT $1,$2,u.id,COALESCE(NULLIF($3,''),u.name),COALESCE(NULLIF($4,''),u.phone),COALESCE(NULLIF($5,''),u.email),$6,true,'new',$7,$7
-		FROM users u WHERE u.id=$2 AND u.status='active'
-		AND EXISTS(SELECT 1 FROM promotions p WHERE p.id=$8)
-		RETURNING name,phone,email`, item.ID, userID, name, phone, email, message, now, promotionID).Scan(&item.Name, &item.Phone, &item.Email)
+		FROM users u WHERE u.id=$8 AND u.status='active'
+		AND EXISTS(SELECT 1 FROM promotions p WHERE p.id=$2)
+		RETURNING name,phone,email`, item.ID, promotionID, name, phone, email, message, now, userID).Scan(&item.Name, &item.Phone, &item.Email)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPromotionForbidden
 	}

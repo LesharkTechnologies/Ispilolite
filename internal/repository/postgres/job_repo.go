@@ -40,7 +40,7 @@ func scanJob(row interface{ Scan(...interface{}) error }) (*models.JobRequest, e
 }
 
 func (r *JobRepository) CreateJobRequest(job *models.JobRequest) error {
-	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, job.ID, job.CustomerID, job.RequesterRole, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, pq.Array(job.PhotoURLs), job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
+	_, err := r.writer.Exec(`INSERT INTO service_requests (`+jobColumns+`) VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12,$13,$14,NULLIF($15,0),$16,$17,$18,$19,$20,$21,$22,$23,$24)`, job.ID, job.CustomerID, job.RequesterRole, job.RequestType, job.Mode, job.TargetISPID, job.TechnicianID, job.AssignedISPID, job.AssignedTechnicianID, job.LocationID, job.County, job.Town, job.Village, job.ServiceType, job.SpeedMbps, job.Description, pq.Array(job.PhotoURLs), job.Budget, job.PreferredDate, job.Status, job.IsAvailable, job.CreatedAt, job.UpdatedAt, job.DeletedAt)
 	return err
 }
 
@@ -193,7 +193,7 @@ func (r *JobRepository) UpdateJobStatus(id, actor, status string) error {
 		}
 		return nil
 	}
-	allowedFrom := map[string]string{"accepted": "open,viewed,quoted,assigned", "in_progress": "accepted,scheduled", "completed": "in_progress"}[status]
+	allowedFrom := map[string]string{"accepted": "open,viewed,quoted,assigned,scheduled", "in_progress": "accepted,scheduled", "completed": "in_progress"}[status]
 	if allowedFrom == "" {
 		return sql.ErrNoRows
 	}

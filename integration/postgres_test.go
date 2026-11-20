@@ -148,6 +148,13 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 	if err := jobs.CreateJobRequest(job); err != nil {
 		t.Fatal(err)
 	}
+	var storedSpeedMbps sql.NullInt64
+	if err := database.GetWriter().QueryRow(`SELECT speed_mbps FROM service_requests WHERE id=$1`, job.ID).Scan(&storedSpeedMbps); err != nil {
+		t.Fatal(err)
+	}
+	if storedSpeedMbps.Valid {
+		t.Fatalf("zero speed_mbps should be stored as NULL, got %d", storedSpeedMbps.Int64)
+	}
 	installations, err := postgres.NewInstallationRepo()
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +174,15 @@ func TestCompanyTechniciansAndCrossRoleFollows(t *testing.T) {
 		t.Fatalf("invalid assigned-to-completed transition was accepted: %v", err)
 	}
 	for _, status := range []string{"accepted", "in_progress", "completed"} {
+		if status == "completed" {
+			_, err := database.GetWriter().Exec(`INSERT INTO installation_proofs
+				(id,request_id,technician_id,check_in_at,photo_urls,checklist,device_serial,status,customer_confirmed_at,customer_confirmed_by)
+				VALUES ($1,$2,$3,now(),'["proof.jpg"]'::jsonb,'{"installed":true}'::jsonb,'CI-SERIAL','approved',now(),$4)`,
+				uuid.NewString(), job.ID, employee2, customer)
+			if err != nil {
+				t.Fatalf("could not prepare customer-confirmed installation proof: %v", err)
+			}
+		}
 		if err := jobs.UpdateJobStatus(job.ID, employee2, status); err != nil {
 			t.Fatalf("valid job transition %s failed: %v", status, err)
 		}
